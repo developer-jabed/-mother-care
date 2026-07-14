@@ -6,20 +6,276 @@ datasource db {
   provider = "postgresql"
 }
 
-enum Role {
-  SUPER_ADMIN
+
+model User {
+  id                Int      @id @default(autoincrement())
+  email             String   @unique
+  password          String
+  role              UserRole
+  isEmailVerified   Boolean  @default(false)
+  lastLogin         DateTime?
+  needPasswordChange Boolean @default(true)
+  isActive          Boolean  @default(true)
+  isDeleted         Boolean  @default(false)
+  deletedAt         DateTime?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  adminProfile      Admin?
+  studentProfile    Student?
+}
+
+enum UserRole {
   ADMIN
   TEACHER
   STUDENT
+  GUARDIAN
 }
 
-model User {
-  id                   Int      @id @default(autoincrement())
-  email                String   @unique
-  password             String
-  needPasswordChange   Boolean  @default(false)
-  role                 Role     @default(STUDENT)
-  isDeleted            Boolean  @default(false)
-  createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+model Admin {
+  id          Int    @id @default(autoincrement())
+  userId      Int    @unique
+  fullName    String
+  phone       String?
+  photo       String?
+  designation String?
+  joiningDate DateTime?
+
+  user        User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+
+model AcademicYear {
+  id          Int      @id @default(autoincrement())
+  title       String
+  startDate   DateTime
+  endDate     DateTime
+  isCurrent   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  enrollments StudentEnrollment[]
+  exams       Exam[]
+  gradingScales GradingScale[]
+
+  @@unique([title])
+  @@index([isCurrent])
+}
+
+model Class {
+  id          Int      @id @default(autoincrement())
+  name        String
+  numericOrder Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sections      Section[]
+  enrollments   StudentEnrollment[]
+  classSubjects ClassSubject[]
+}
+
+model Section {
+  id          Int    @id @default(autoincrement())
+  classId     Int
+  name        String
+  capacity    Int?
+
+  class       Class  @relation(fields: [classId], references: [id], onDelete: Cascade)
+  enrollments StudentEnrollment[]
+  classSubjects ClassSubject[]
+
+  @@unique([classId, name])
+}
+
+model Student {
+  id              Int      @id @default(autoincrement())
+  userId          Int?     @unique
+  admissionNumber String   @unique
+  fullName        String
+  gender          Gender
+  dateOfBirth     DateTime
+  phone           String?
+  address         String?
+  photo           String?
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user            User?                @relation(fields: [userId], references: [id], onDelete: SetNull)
+  enrollments     StudentEnrollment[]
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  OTHER
+}
+
+model StudentEnrollment {
+  id              Int      @id @default(autoincrement())
+  studentId       Int
+  academicYearId  Int
+  classId         Int
+  sectionId       Int
+  rollNumber      Int
+  isCurrent       Boolean  @default(true)
+  promotedFromId  Int?
+  promotionDate   DateTime?
+  status          EnrollmentStatus @default(ACTIVE)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  student         Student          @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  academicYear    AcademicYear     @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  class           Class            @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section         Section          @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  promotedFrom    StudentEnrollment? @relation("PromotionHistory", fields: [promotedFromId], references: [id])
+  promotions      StudentEnrollment[] @relation("PromotionHistory")
+  results         Result[]
+  smsLogs         SmsLog[]
+
+  @@unique([studentId, academicYearId])
+  @@unique([academicYearId, classId, sectionId, rollNumber])
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  PROMOTED
+  COMPLETED
+  LEFT
+}
+
+
+model Subject {
+  id        Int    @id @default(autoincrement())
+  code      String @unique
+  name      String
+  fullMarks Int
+  passMarks Int
+  credit    Float? @db.DoublePrecision
+  isOptional Boolean @default(false)
+
+  classSubjects ClassSubject[]
+  resultDetails ResultDetail[]
+}
+
+model ClassSubject {
+  id        Int    @id @default(autoincrement())
+  classId   Int
+  sectionId Int?
+  subjectId Int
+
+  class     Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  section   Section? @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([classId, sectionId, subjectId])
+}
+
+
+model Exam {
+  id             Int      @id @default(autoincrement())
+  academicYearId Int
+  name           String
+  examTypeId     Int
+  startDate      DateTime?
+  endDate        DateTime?
+  isPublished    Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+  examType       ExamType     @relation(fields: [examTypeId], references: [id], onDelete: Restrict)
+  results        Result[]
+  smsLogs        SmsLog[]
+  smsSentAt      DateTime?
+}
+
+model ExamType {
+  id        Int    @id @default(autoincrement())
+  name      String
+  weight    Float? @db.DoublePrecision
+
+  exams     Exam[]
+}
+
+model Result {
+  id                  Int      @id @default(autoincrement())
+  studentEnrollmentId Int
+  examId              Int
+  totalMarks          Float    @db.DoublePrecision
+  percentage          Float    @db.DoublePrecision
+  grade               String
+  gradePoint          Float    @db.DoublePrecision
+  position            Int?
+  remarks             String?
+  isPublished         Boolean  @default(false)
+  publishedAt         DateTime?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  enrollment          StudentEnrollment @relation(fields: [studentEnrollmentId], references: [id], onDelete: Cascade)
+  exam                Exam             @relation(fields: [examId], references: [id], onDelete: Cascade)
+  details             ResultDetail[]
+
+  @@unique([studentEnrollmentId, examId])
+}
+
+model ResultDetail {
+  id              Int    @id @default(autoincrement())
+  resultId        Int
+  subjectId       Int
+  writtenMarks    Float? @db.DoublePrecision
+  mcqMarks        Float? @db.DoublePrecision
+  practicalMarks  Float? @db.DoublePrecision
+  vivaMarks       Float? @db.DoublePrecision
+  totalMarks      Float  @db.DoublePrecision
+  grade           String
+  gradePoint      Float  @db.DoublePrecision
+
+  result          Result  @relation(fields: [resultId], references: [id], onDelete: Cascade)
+  subject         Subject @relation(fields: [subjectId], references: [id], onDelete: Restrict)
+
+  @@unique([resultId, subjectId])
+}
+
+model GradingScale {
+  id            Int    @id @default(autoincrement())
+  academicYearId Int
+  minPercentage Float  @db.DoublePrecision
+  maxPercentage Float  @db.DoublePrecision
+  grade         String
+  gradePoint    Float  @db.DoublePrecision
+
+  academicYear  AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
+
+  @@unique([academicYearId, minPercentage])
+}
+
+
+model SmsLog {
+  id                  Int      @id @default(autoincrement())
+  studentEnrollmentId Int
+  examId              Int
+  phone               String
+  message             String
+  status              SmsStatus @default(PENDING)
+  providerMessageId   String?
+  errorMessage        String?
+  attemptCount        Int      @default(0)
+  sentAt              DateTime?
+  createdAt           DateTime @default(now())
+
+  enrollment          StudentEnrollment @relation(fields: [studentEnrollmentId], references: [id], onDelete: Cascade)
+  exam                Exam              @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@index([examId, status])
+  @@unique([studentEnrollmentId, examId])
+}
+
+enum SmsStatus {
+  PENDING
+  SENT
+  FAILED
+  DELIVERED
 }
