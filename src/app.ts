@@ -40,7 +40,20 @@ const buildApp = async () => {
   });
 
   await app.register(cors, {
-    origin: process.env.ALLOWED_ORIGINS?.split(",") ?? "*",
+    origin: (origin, cb) => {
+      const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",").map((o) => o.trim()) ?? [];
+
+      // Allow non-browser requests (curl, server-to-server, health checks) with no Origin header
+      if (!origin) {
+        return cb(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return cb(null, true);
+      }
+
+      cb(new Error(`Origin ${origin} not allowed by CORS`), false);
+    },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true,
