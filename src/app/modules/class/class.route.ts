@@ -10,7 +10,7 @@ async function classRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Section Routes
     fastify.post("/create-section", classController.createSection);
-    fastify.get("/sections", classController.getAllSections);
+
     fastify.get("/sections/class/:classId", classController.getSectionsByClass);
     fastify.patch("/section/:id", classController.updateSection);
 }

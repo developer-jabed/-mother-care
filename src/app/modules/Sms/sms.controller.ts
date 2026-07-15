@@ -9,7 +9,7 @@ const sendResultSms = async (
     const examId = Number(request.params.examId);
     const force = request.query.force === 'true';
 
-    const result = await SmsService.queueResultSmsForExam(request.server, examId, force);
+    const result = await SmsService.queueResultSmsForExam(request.server, { examId, force });
 
     return reply.status(httpStatus.OK).send({
         success: true,

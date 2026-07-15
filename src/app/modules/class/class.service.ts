@@ -4,6 +4,13 @@ import httpStatus from 'http-status';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 
+
+export type StudentsBySectionParams = {
+  academicYearId: number;
+  classId: number;
+  sectionId: number;
+};
+
 const createClass = async (payload: {
   name: string;
   numericOrder?: number;
@@ -118,6 +125,40 @@ const getSectionsByClass = async (classId: number): Promise<Section[]> => {
   });
 };
 
+
+const getStudentsBySection = async (params: StudentsBySectionParams) => {
+  const { academicYearId, classId, sectionId } = params;
+
+  // Validate the class/section actually belong together — avoids silently
+  // returning [] for a bad classId/sectionId combination without explanation.
+  const section = await prisma.section.findUnique({
+    where: { id: sectionId },
+  });
+
+  if (!section) {
+    throw new ApiError(httpStatus.NOT_FOUND, "শাখা পাওয়া যায়নি");
+  }
+
+  if (section.classId !== classId) {
+    throw new ApiError(httpStatus.BAD_REQUEST, "এই শাখাটি এই ক্লাসের অন্তর্ভুক্ত নয়");
+  }
+
+  const enrollments = await prisma.studentEnrollment.findMany({
+    where: {
+      academicYearId,
+      classId,
+      sectionId,
+      isCurrent: true,
+    },
+    orderBy: { rollNumber: "asc" },
+    include: {
+      student: true,
+    },
+  });
+
+  return enrollments;
+};
+
 const updateSection = async (
   id: number,
   payload: {
@@ -146,6 +187,7 @@ export const classService = {
   getClassById,
   getAllClasses,
   createSection,
+  getStudentsBySection,
   getAllSections,
   getSectionsByClass,
   updateSection,

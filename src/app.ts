@@ -12,6 +12,9 @@ import globalErrorHandler from "./app/middlewares/globalErrorHandler.js";
 import notFound from "./app/middlewares/notFound.js";
 import registerRoutes from "./app/routes/index.js";
 
+// side-effect import — starts the BullMQ worker listening on 'smsQueue'
+import "./app/modules/Sms/sms.worker.js";
+
 const require = createRequire(import.meta.url);
 
 const isDev = process.env.NODE_ENV === "development";
@@ -30,8 +33,6 @@ const buildApp = async () => {
       : { level: "info" },
     trustProxy: true,
   });
-
-
 
   // ── Security ───────────────────────────────────────────────
   await app.register(helmet, {
@@ -72,9 +73,6 @@ const buildApp = async () => {
   await app.register(redisPlugin);
 
   await app.register(queuePlugin);
-
-
-
 
   // ── Lifecycle hooks ────────────────────────────────────────
   app.addHook("onReady", () => {

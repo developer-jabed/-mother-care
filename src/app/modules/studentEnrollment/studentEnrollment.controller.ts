@@ -97,6 +97,18 @@ const getAllEnrollments = catchAsync(async (request: FastifyRequest, reply: Fast
     });
 });
 
+const getStudentsBySection = catchAsync(async (request: FastifyRequest, reply: FastifyReply) => {
+    const validated = performanceRankingQueryZodSchema.parse(request.query);
+    const result = await studentEnrollmentService.getStudentsBySection(validated);
+
+    sendResponse(reply, {
+        statusCode: 200,
+        success: true,
+        message: "শিক্ষার্থী তালিকা সফলভাবে আনা হয়েছে",
+        data: result,
+    });
+});
+
 export const studentEnrollmentController = {
     createStudentEnrollment,
     promoteStudent,
@@ -105,4 +117,5 @@ export const studentEnrollmentController = {
     updateStudentEnrollment,
     getEnrollmentById,
     getAllEnrollments,
+    getStudentsBySection,
 };

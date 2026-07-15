@@ -266,6 +266,36 @@ const getAllEnrollments = async (filters: any = {}) => {
     };
 };
 
+const getStudentsBySection = async (params: {
+    academicYearId: number;
+    classId: number;
+    sectionId: number;
+}) => {
+    const section = await prisma.section.findUnique({
+        where: { id: params.sectionId },
+    });
+
+    if (!section) {
+        throw new ApiError(httpStatus.NOT_FOUND, "শাখা পাওয়া যায়নি");
+    }
+
+    if (section.classId !== params.classId) {
+        throw new ApiError(httpStatus.BAD_REQUEST, "এই শাখাটি এই ক্লাসের অন্তর্ভুক্ত নয়");
+    }
+
+    return prisma.studentEnrollment.findMany({
+        where: {
+            academicYearId: params.academicYearId,
+            classId: params.classId,
+            sectionId: params.sectionId,
+            isCurrent: true,
+        },
+        orderBy: { rollNumber: "asc" },
+        include: { student: true },
+    });
+};
+
+
 export const studentEnrollmentService = {
     createStudentEnrollment,
     updateStudentEnrollment,
@@ -274,4 +304,5 @@ export const studentEnrollmentService = {
     bulkPromoteStudents,
     getEnrollmentById,
     getAllEnrollments,
+    getStudentsBySection,
 };

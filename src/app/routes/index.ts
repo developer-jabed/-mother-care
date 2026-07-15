@@ -11,6 +11,7 @@ import examTypeRoutes from "../modules/examType/examType.route.js";
 import resultRoutes from "../modules/result/result.route.js";
 import gradingScaleRoutes from "../modules/gradingScale/gradingScale.route.js";
 import smsRoutes from "../modules/Sms/sms.route.js";
+import dashboardRoutes from "../modules/dashboard/dashboard.route.js";
 
 async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   // Health Check
@@ -68,6 +69,10 @@ async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.register(smsRoutes, {
     prefix: "/sms"
+  });
+
+  fastify.register(dashboardRoutes, {
+    prefix: "/dashboard"
   });
 }
 

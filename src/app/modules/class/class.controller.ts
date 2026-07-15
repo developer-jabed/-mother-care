@@ -83,6 +83,7 @@ const getSectionsByClass = catchAsync(async (request: FastifyRequest, reply: Fas
 
 
 
+
 const updateSection = catchAsync(async (request: FastifyRequest, reply: FastifyReply) => {
   const { id } = request.params as { id: string };
   const result = await classService.updateSection(Number(id), request.body as any);
@@ -101,7 +102,6 @@ export const classController = {
   getClassById,
   getAllClasses,
   createSection,
-  getAllSections,
   getSectionsByClass,
   updateSection,
 };

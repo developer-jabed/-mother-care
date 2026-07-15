@@ -2,7 +2,7 @@ import httpStatus from 'http-status';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 import type { FastifyInstance } from 'fastify';
-import type { ISmsJobData } from './sms.interface.js';
+import type { ISmsJobData, ISendResultSmsPayload } from './sms.interface.js';
 
 const buildResultSmsText = (params: {
     studentName: string;
@@ -18,9 +18,10 @@ const buildResultSmsText = (params: {
 
 const queueResultSmsForExam = async (
     fastify: FastifyInstance,
-    examId: number,
-    force = false
+    payload: ISendResultSmsPayload
 ) => {
+    const { examId, force = false } = payload;
+
     const exam = await prisma.exam.findUnique({ where: { id: examId } });
     if (!exam) {
         throw new ApiError(httpStatus.NOT_FOUND, 'Exam not found');
@@ -93,8 +94,8 @@ const queueResultSmsForExam = async (
                 message,
             },
             opts: {
-                attempts: 3,
-                backoff: { type: 'exponential', delay: 5000 },
+                attempts: 4,
+                backoff: { type: 'exponential', delay: 8000 },
                 removeOnComplete: 1000,
                 removeOnFail: false,
             },
@@ -102,7 +103,11 @@ const queueResultSmsForExam = async (
 
         await prisma.smsLog.upsert({
             where: { studentEnrollmentId_examId: { studentEnrollmentId: enrollment.id, examId } },
-            update: { status: 'PENDING', message, phone: enrollment.student.phone },
+            update: {
+                status: 'PENDING',
+                message,
+                phone: enrollment.student.phone
+            },
             create: {
                 studentEnrollmentId: enrollment.id,
                 examId,
@@ -115,7 +120,10 @@ const queueResultSmsForExam = async (
 
     if (jobs.length > 0) {
         await fastify.smsQueue.addBulk(jobs);
-        await prisma.exam.update({ where: { id: examId }, data: { smsSentAt: new Date() } });
+        await prisma.exam.update({
+            where: { id: examId },
+            data: { smsSentAt: new Date() }
+        });
     }
 
     return {
@@ -127,4 +135,6 @@ const queueResultSmsForExam = async (
     };
 };
 
-export const SmsService = { queueResultSmsForExam };
+export const SmsService = {
+    queueResultSmsForExam
+};

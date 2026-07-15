@@ -234,7 +234,29 @@ const getStudentById = async (id: number) => {
         include: {
             user: true,
             enrollments: {
-                include: { academicYear: true, class: true, section: true },
+                orderBy: { academicYear: { startDate: "desc" } },
+                include: {
+                    academicYear: true,
+                    class: true,
+                    section: true,
+                    promotedFrom: true,
+                    promotions: true,
+                    results: {
+                        orderBy: { createdAt: "desc" },
+                        include: {
+                            exam: {
+                                include: { examType: true },
+                            },
+                            details: {
+                                include: { subject: true },
+                            },
+                        },
+                    },
+                    smsLogs: {
+                        orderBy: { createdAt: "desc" },
+                        include: { exam: true },
+                    },
+                },
             },
         },
     });
