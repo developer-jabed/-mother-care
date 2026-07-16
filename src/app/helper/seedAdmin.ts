@@ -38,7 +38,7 @@ export const seedAdmin = async () => {
         },
       });
 
-      // Create Admin Profile
+
       await tx.admin.create({
         data: {
           userId: user.id,
@@ -63,5 +63,4 @@ export const seedAdmin = async () => {
   }
 };
 
-// Run the seeder
 seedAdmin();
