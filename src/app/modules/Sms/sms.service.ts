@@ -13,7 +13,7 @@ const buildResultSmsText = (params: {
     grade: string;
 }) => {
     const { studentName, examName, totalMarks, totalFullMarks, totalSubjects, grade } = params;
-    return `প্রিয় অভিভাবক, ${studentName}-এর ${examName} পরীক্ষার ফলাফল: প্রাপ্ত নম্বর ${totalMarks}/${totalFullMarks} (${totalSubjects} বিষয়), গ্রেড: ${grade}।`;
+    return `Dear Guardian, ${studentName}'s ${examName} result: ${totalMarks}/${totalFullMarks} (${totalSubjects} subjects), Grade: ${grade}.`;
 };
 
 const queueResultSmsForExam = async (

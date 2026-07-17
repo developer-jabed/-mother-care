@@ -14,6 +14,7 @@ import registerRoutes from "./app/routes/index.js";
 
 // side-effect import — starts the BullMQ worker listening on 'smsQueue'
 import "./app/modules/Sms/sms.worker.js";
+import { startKeepAliveCron } from "./app/shared/keepAlive.js";
 
 const require = createRequire(import.meta.url);
 
@@ -90,6 +91,7 @@ const buildApp = async () => {
   // ── Lifecycle hooks ────────────────────────────────────────
   app.addHook("onReady", () => {
     app.log.info("✅ Server is ready and accepting connections");
+    startKeepAliveCron(app);
   });
 
   app.addHook("onClose", (_instance, done) => {

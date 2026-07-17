@@ -1,35 +1,35 @@
 import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { prisma } from '../../shared/prisma.js';
 
 const API_KEY = process.env.BULKSMSBD_API_KEY!;
 const SENDER_ID = process.env.BULKSMSBD_SENDER_ID!;
 const BASE_URL = process.env.BULKSMSBD_BASE_URL || 'http://bulksmsbd.net/api';
 
-export const sendSmsViaBulkSmsBD = async (phone: string, message: string) => {
-    const encodedMessage = encodeURIComponent(message);
 
+export const sendSmsViaBulkSmsBD = async (phone: string, message: string) => {
     const response = await axios.get(`${BASE_URL}/smsapi`, {
         params: {
             api_key: API_KEY,
             type: 'text',
             number: phone,
             senderid: SENDER_ID,
-            message: encodedMessage,
+            message: message, // let axios handle encoding — don't pre-encode
         },
         timeout: 15000,
     });
 
     const data = response.data;
-    const code = data?.code || data?.status;
+    const code = data?.response_code;
 
-    if (code === 202 || data?.status?.toLowerCase() === 'success') {
+    if (code === 202) {
         return { success: true, code: 202, providerResponse: data };
     }
 
     throw {
         success: false,
         code,
-        message: getErrorMessage(code, data?.message),
+        message: getErrorMessage(code, data?.error_message),
         isRetryable: isRetryableError(code),
     };
 };
