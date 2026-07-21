@@ -6,7 +6,7 @@ import multipart from "@fastify/multipart";
 import fastifyRateLimit from "@fastify/rate-limit";
 import pinoPretty from "pino-pretty";
 import { createRequire } from "module";
-import redisPlugin from "./app/shared/redis.js";
+
 import queuePlugin from "./app/shared/queue.js";
 import globalErrorHandler from "./app/middlewares/globalErrorHandler.js";
 import notFound from "./app/middlewares/notFound.js";
@@ -84,7 +84,7 @@ const buildApp = async () => {
   });
 
   // ── Redis ──────────────────────────────────────────────────
-  await app.register(redisPlugin);
+
 
   await app.register(queuePlugin);
 

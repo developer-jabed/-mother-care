@@ -2,8 +2,7 @@ import type { FastifyRequest, FastifyReply } from "fastify";
 import { studentEnrollmentService } from "./studentEnrollment.service.js";
 import sendResponse from "../../shared/sendResponse.js";
 import catchAsync from "../../shared/catchAsync.js";
-import ApiError from "../../errors/api.error.js";
-import httpStatus from "http-status";
+
 import {
     createStudentEnrollmentZodSchema,
     updateStudentEnrollmentZodSchema,

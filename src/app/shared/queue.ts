@@ -5,8 +5,8 @@ import { Redis as IORedis } from "ioredis";
 import type { FastifyInstance } from "fastify";
 
 export default fp(async (fastify: FastifyInstance) => {
-    const redisUrl = process.env.UPSTASH_REDIS_URL;
-    if (!redisUrl) throw new Error("UPSTASH_REDIS_URL is required");
+    const redisUrl = process.env.BULLMQ_REDIS_URL;
+    if (!redisUrl) throw new Error("BULLMQ_REDIS_URL is required");
 
     const bullConnection = new IORedis(redisUrl, {
         maxRetriesPerRequest: null,

@@ -100,18 +100,18 @@ const promoteStudent = async (payload: PromoteStudentInput) => {
 
 /**
  * Returns all students currently enrolled in the given academic year / class / section,
- * ranked by their average result percentage across all published exams that year.
- * Students with no published results yet are pushed to the bottom, ordered by current roll.
+ * ranked by their result percentage in a specific exam (typically the ফাইনাল পরীক্ষা / final exam).
+ * Students with no published result for that exam are pushed to the bottom, ordered by current roll.
  */
 const getStudentsWithPerformanceRanking = async (query: PerformanceRankingQueryInput) => {
-    const { academicYearId, classId, sectionId } = query;
+    const { academicYearId, classId, sectionId, examId } = query;
 
     const enrollments = await prisma.studentEnrollment.findMany({
         where: { academicYearId, classId, sectionId, isCurrent: true },
         include: {
             student: true,
             results: {
-                where: { isPublished: true },
+                where: { isPublished: true, examId },
                 select: { percentage: true },
             },
         },
@@ -119,18 +119,16 @@ const getStudentsWithPerformanceRanking = async (query: PerformanceRankingQueryI
 
     const ranked = enrollments
         .map(e => {
-            const hasResults = e.results.length > 0;
-            const avgPercentage = hasResults
-                ? e.results.reduce((sum, r) => sum + r.percentage, 0) / e.results.length
-                : null;
+            const finalResult = e.results[0]; // one exam selected -> at most one result per student
+            const percentage = finalResult ? finalResult.percentage : null;
 
             return {
                 studentId: e.studentId,
                 enrollmentId: e.id,
                 name: e.student.fullName,
                 currentRoll: e.rollNumber,
-                examsCounted: e.results.length,
-                percentage: avgPercentage,
+                hasResult: !!finalResult,
+                percentage,
             };
         })
         .sort((a, b) => {
