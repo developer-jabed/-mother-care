@@ -95,8 +95,19 @@ const createStudent = catchAsync(async (request: FastifyRequest, reply: FastifyR
     let result: any;
 
     if (hasUserField && hasStudentField) {
+        // Ensure student object exists
+        if (!body.student) {
+            body.student = {};
+        }
+
+        // ✅ Critical fix for auto-increment
+        if (typeof body.student.admissionNumber === "undefined" || body.student.admissionNumber === null) {
+            body.student.admissionNumber = "";
+        }
+
         validated = createUserWithStudentZodSchema.parse(body);
         result = await studentService.createUserWithStudent(validated, file);
+
         sendResponse(reply, {
             statusCode: 201,
             success: true,
@@ -106,6 +117,7 @@ const createStudent = catchAsync(async (request: FastifyRequest, reply: FastifyR
     } else {
         validated = createStudentZodSchema.parse(body);
         result = await studentService.createStudent(validated, file);
+
         sendResponse(reply, {
             statusCode: 201,
             success: true,

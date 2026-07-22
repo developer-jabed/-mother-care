@@ -8,7 +8,7 @@ import { buildPaginationMeta, type PaginationResult } from '../../helper/paginat
 import { resultSearchableFields } from './result.constant.js';
 
 
-// Shared helper: fetches subjects + grading scale, computes per-subject and overall grades
+
 const buildResultComputation = async (
     examId: number,
     details: ICreateResultPayload['details']

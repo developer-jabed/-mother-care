@@ -8,10 +8,12 @@ import { subjectSearchableFields } from './subject.constants.js';
 
 
 const createSubject = async (
-    payload: Prisma.SubjectCreateInput
+    payload: Prisma.SubjectCreateInput & { classId: number }
 ): Promise<Subject> => {
+    const { classId, ...subjectData } = payload;
+
     const existing = await prisma.subject.findUnique({
-        where: { code: payload.code },
+        where: { code: subjectData.code },
     });
 
     if (existing) {
@@ -21,14 +23,42 @@ const createSubject = async (
         );
     }
 
-    if (payload.passMarks > payload.fullMarks) {
+    if (subjectData.passMarks > subjectData.fullMarks) {
         throw new ApiError(
             httpStatus.BAD_REQUEST,
             'Pass marks cannot be greater than full marks'
         );
     }
 
-    const result = await prisma.subject.create({ data: payload });
+    const classWithSections = await prisma.class.findUnique({
+        where: { id: classId },
+        include: { sections: true },
+    });
+
+    if (!classWithSections) {
+        throw new ApiError(httpStatus.NOT_FOUND, 'Class not found');
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+        const subject = await tx.subject.create({ data: subjectData });
+
+        if (classWithSections.sections.length > 0) {
+            await tx.classSubject.createMany({
+                data: classWithSections.sections.map((section) => ({
+                    classId,
+                    sectionId: section.id,
+                    subjectId: subject.id,
+                })),
+                skipDuplicates: true,
+            });
+        } else {
+            await tx.classSubject.create({
+                data: { classId, sectionId: null, subjectId: subject.id },
+            });
+        }
+
+        return subject;
+    });
 
     return result;
 };
@@ -113,7 +143,10 @@ const updateSubject = async (
 const deleteSubject = async (id: number): Promise<Subject> => {
     await getSingleSubject(id);
 
-    const result = await prisma.subject.delete({ where: { id } });
+    const result = await prisma.$transaction(async (tx) => {
+        await tx.classSubject.deleteMany({ where: { subjectId: id } });
+        return tx.subject.delete({ where: { id } });
+    });
 
     return result;
 };

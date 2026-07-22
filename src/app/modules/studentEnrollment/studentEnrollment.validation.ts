@@ -31,7 +31,7 @@ export const performanceRankingQueryZodSchema = z.object({
     academicYearId: z.coerce.number().int().positive(),
     classId: z.coerce.number().int().positive(),
     sectionId: z.coerce.number().int().positive(),
-    examId: z.coerce.number({ error: "পরীক্ষা নির্বাচন করুন" }).int().positive(),
+    // examId: z.coerce.number({ error: "পরীক্ষা নির্বাচন করুন" }).int().positive(),
 });
 
 export const bulkPromoteZodSchema = z.object({

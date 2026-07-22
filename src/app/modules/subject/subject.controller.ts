@@ -8,12 +8,23 @@ import pick from '../../helper/pick.js';
 
 
 const createSubject = catchAsync(async (request, reply) => {
-    const result = await SubjectService.createSubject(request.body as any);
+    const body = request.body as any;
+
+    const payload = {
+        ...body,
+        fullMarks: Number(body.fullMarks),
+        passMarks: Number(body.passMarks),
+        credit: body.credit ? Number(body.credit) : undefined,
+        classId: Number(body.classId),
+        isOptional: body.isOptional === true || body.isOptional === "true",
+    };
+
+    const result = await SubjectService.createSubject(payload);
 
     return sendResponse(reply, {
         statusCode: httpStatus.OK,
         success: true,
-        message: 'Subject created successfully',
+        message: 'Subject created successfully and assigned to all sections of the class',
         data: result,
     });
 });

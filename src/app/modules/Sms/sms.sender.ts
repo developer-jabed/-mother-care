@@ -5,7 +5,13 @@ import { prisma } from '../../shared/prisma.js';
 const API_KEY = process.env.BULKSMSBD_API_KEY!;
 const SENDER_ID = process.env.BULKSMSBD_SENDER_ID!;
 const BASE_URL = process.env.BULKSMSBD_BASE_URL || 'http://bulksmsbd.net/api';
+const PROXY_URL = process.env.QUOTAGUARD_URL; // e.g. http://user:pass@static-proxy.quotaguard.com:9293
 
+// Only route through the static proxy in development, where the IP changes.
+// In production (Render/OCI), the server's own IP is already stable and whitelisted directly.
+const proxyAgent = process.env.NODE_ENV === "development" && PROXY_URL
+    ? new HttpsProxyAgent(PROXY_URL)
+    : undefined;
 
 export const sendSmsViaBulkSmsBD = async (phone: string, message: string) => {
     const response = await axios.get(`${BASE_URL}/smsapi`, {
@@ -14,10 +20,14 @@ export const sendSmsViaBulkSmsBD = async (phone: string, message: string) => {
             type: 'text',
             number: phone,
             senderid: SENDER_ID,
-            message: message, // let axios handle encoding — don't pre-encode
+            message: message,
         },
         timeout: 15000,
+        httpAgent: proxyAgent,
+        httpsAgent: proxyAgent,
     });
+
+    console.log('🔍 RAW BulkSMSBD response:', JSON.stringify(response.data, null, 2));
 
     const data = response.data;
     const code = data?.response_code;

@@ -61,6 +61,30 @@ const uploadStudentPhoto = async (file: UploadedFile): Promise<string> => {
     }
 };
 
+const getNextAdmissionNumber = async (tx?: any): Promise<string> => {
+    const prismaClient = tx || prisma;
+
+    const lastStudent = await prismaClient.student.findFirst({
+        orderBy: {
+            admissionNumber: 'desc'
+        },
+        select: {
+            admissionNumber: true
+        },
+    });
+
+    let nextNum = 1;
+    if (lastStudent?.admissionNumber) {
+        const lastNum = parseInt(lastStudent.admissionNumber, 10);
+        if (!isNaN(lastNum)) {
+            nextNum = lastNum + 1;
+        }
+    }
+
+    // You can change padding as needed (e.g., 4 digits, 6 digits, etc.)
+    return nextNum.toString().padStart(4, '0');
+};
+
 // ── Utility: extract Cloudinary public_id from a secure_url ────────────────
 const extractPublicId = (url: string): string | null => {
     const match = url.match(/\/upload\/(?:v\d+\/)?(.+)\.\w+$/);
@@ -125,10 +149,16 @@ const createUserWithStudent = async (
 ): Promise<Student> => {
     const { user: userPayload, student: studentPayload } = payload;
 
-    // Pre-checks BEFORE any upload/DB write, so we fail fast and cheap
+    // Auto generate admission number if not provided
+    let admissionNumber = studentPayload.admissionNumber?.trim();
+    if (!admissionNumber) {
+        admissionNumber = await getNextAdmissionNumber();
+    }
+
+    // Pre-checks BEFORE any upload/DB write
     const [emailExists, admissionExists] = await Promise.all([
         prisma.user.findUnique({ where: { email: userPayload.email } }),
-        prisma.student.findUnique({ where: { admissionNumber: studentPayload.admissionNumber } }),
+        prisma.student.findUnique({ where: { admissionNumber } }),
     ]);
 
     if (emailExists) {
@@ -138,7 +168,7 @@ const createUserWithStudent = async (
         throw new ApiError(httpStatus.CONFLICT, "Admission number already exists");
     }
 
-    // Upload photo (outside the transaction — Cloudinary isn't transactional)
+    // Upload photo (outside transaction)
     let photoUrl: string | undefined;
     if (file) {
         photoUrl = await uploadStudentPhoto(file);
@@ -147,7 +177,6 @@ const createUserWithStudent = async (
     const hashedPassword = await bcrypt.hash(userPayload.password, BCRYPT_SALT_ROUNDS);
 
     try {
-        // Atomic: either both User and Student are created, or neither is
         const result = await prisma.$transaction(async (tx) => {
             const createdUser = await tx.user.create({
                 data: {
@@ -159,7 +188,7 @@ const createUserWithStudent = async (
 
             const createdStudent = await tx.student.create({
                 data: {
-                    admissionNumber: studentPayload.admissionNumber,
+                    admissionNumber,                    // ← Auto-generated
                     fullName: studentPayload.fullName,
                     gender: studentPayload.gender,
                     dateOfBirth: new Date(studentPayload.dateOfBirth),
@@ -176,13 +205,11 @@ const createUserWithStudent = async (
                     },
                 },
             });
-
             return createdStudent;
         });
 
         return result;
     } catch (error) {
-        // Roll back the uploaded photo if the DB transaction failed
         if (photoUrl) {
             const publicId = extractPublicId(photoUrl);
             if (publicId) await fileUploader.deleteFromCloudinary(publicId).catch(() => { });

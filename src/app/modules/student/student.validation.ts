@@ -24,7 +24,29 @@ const phoneSchema = z
 
 const addressSchema = z.string().trim().min(1).max(255).optional();
 
-// ── Create Student ─────────────────────────────────────────────────────────
+// ── Create User + Student (Fixed for Auto-Increment) ───────────────────────
+export const createUserWithStudentZodSchema = z.object({
+    user: z.object({
+        email: z.string().trim().toLowerCase().email("Invalid email address"),
+        password: z.string().min(6, "Password must be at least 6 characters"),
+    }),
+    student: z.object({
+        // ✅ FIXED: Using preprocess so validation passes when field is missing/empty
+        admissionNumber: z.preprocess(
+            (val) => (val == null || val === "" ? undefined : String(val).trim()),
+            z.string().trim().min(1, "Admission number is required").optional()
+        ),
+
+        fullName: z.string().trim().min(2, "Full name must be at least 2 characters"),
+        gender: z.enum(["MALE", "FEMALE", "OTHER"]),
+        dateOfBirth: dateOfBirthSchema,
+        phone: phoneSchema,
+        address: addressSchema,
+        isActive: stringToBoolean.optional().default(true),
+    }),
+}).strip();
+
+// ── Create Student (Single) ────────────────────────────────────────────────
 export const createStudentZodSchema = z.object({
     userId: z.coerce.number().int().positive().optional(),
     admissionNumber: z.string().trim().min(1, "Admission number is required"),
@@ -34,23 +56,6 @@ export const createStudentZodSchema = z.object({
     phone: phoneSchema,
     address: addressSchema,
     isActive: stringToBoolean.optional().default(true),
-}).strip(); // remove unknown fields
-
-// ── Create User + Student ──────────────────────────────────────────────────
-export const createUserWithStudentZodSchema = z.object({
-    user: z.object({
-        email: z.string().trim().toLowerCase().email("Invalid email address"),
-        password: z.string().min(6, "Password must be at least 6 characters"),
-    }),
-    student: z.object({
-        admissionNumber: z.string().trim().min(1, "Admission number is required"),
-        fullName: z.string().trim().min(2, "Full name must be at least 2 characters"),
-        gender: z.enum(["MALE", "FEMALE", "OTHER"]),
-        dateOfBirth: dateOfBirthSchema,
-        phone: phoneSchema,
-        address: addressSchema,
-        isActive: stringToBoolean.optional().default(true),
-    }),
 }).strip();
 
 // ── Update Student ─────────────────────────────────────────────────────────

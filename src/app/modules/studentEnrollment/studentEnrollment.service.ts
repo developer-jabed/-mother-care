@@ -98,20 +98,37 @@ const promoteStudent = async (payload: PromoteStudentInput) => {
     return newEnrollment;
 };
 
-/**
- * Returns all students currently enrolled in the given academic year / class / section,
- * ranked by their result percentage in a specific exam (typically the ফাইনাল পরীক্ষা / final exam).
- * Students with no published result for that exam are pushed to the bottom, ordered by current roll.
- */
-const getStudentsWithPerformanceRanking = async (query: PerformanceRankingQueryInput) => {
-    const { academicYearId, classId, sectionId, examId } = query;
+const getStudentsWithPerformanceRanking = async (query: {
+    academicYearId: number;
+    classId: number;
+    sectionId: number;
+}) => {
+    const { academicYearId, classId, sectionId } = query;
+
+    // Find the final exam for this academic year (adjust match to your schema)
+    const finalExam = await prisma.exam.findFirst({
+        where: {
+            academicYearId,
+            examType: {
+                name: { contains: "ফাইনাল", mode: "insensitive" },
+            },
+        },
+        orderBy: { createdAt: "desc" },
+    });
+
+    if (!finalExam) {
+        throw new ApiError(
+            httpStatus.NOT_FOUND,
+            "এই শিক্ষাবর্ষের ফাইনাল পরীক্ষা পাওয়া যায়নি"
+        );
+    }
 
     const enrollments = await prisma.studentEnrollment.findMany({
         where: { academicYearId, classId, sectionId, isCurrent: true },
         include: {
             student: true,
             results: {
-                where: { isPublished: true, examId },
+                where: { isPublished: true, examId: finalExam.id },
                 select: { percentage: true },
             },
         },
@@ -119,7 +136,7 @@ const getStudentsWithPerformanceRanking = async (query: PerformanceRankingQueryI
 
     const ranked = enrollments
         .map(e => {
-            const finalResult = e.results[0]; // one exam selected -> at most one result per student
+            const finalResult = e.results[0];
             const percentage = finalResult ? finalResult.percentage : null;
 
             return {
@@ -138,18 +155,16 @@ const getStudentsWithPerformanceRanking = async (query: PerformanceRankingQueryI
             return b.percentage - a.percentage;
         });
 
-    return ranked.map((s, idx) => ({
-        ...s,
-        suggestedRoll: idx + 1,
-    }));
+    return {
+        examId: finalExam.id,
+        examName: finalExam.name,
+        students: ranked.map((s, idx) => ({
+            ...s,
+            suggestedRoll: idx + 1,
+        })),
+    };
 };
 
-/**
- * Bulk-promotes selected students from a source academic year/class/section
- * into a target academic year/class/section, assigning the provided roll numbers.
- * Students who already have an enrollment in the target academic year are skipped.
- * The old enrollment is marked PROMOTED and isCurrent: false; the new one links back via promotedFromId.
- */
 const bulkPromoteStudents = async (payload: BulkPromoteInput) => {
     const {
         sourceAcademicYearId,
