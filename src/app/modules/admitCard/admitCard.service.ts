@@ -483,7 +483,7 @@ const generateAdmitCardsForEnrollments = async (
 
     const exam = await prisma.exam.findUnique({ where: { id: examId } });
     if (!exam) {
-        throw new ApiError(httpStatus.NOT_FOUND, `Exam ${examId} not found`);
+        throw new ApiError(httpStatus.NOT_FOUND, `Exam ${examId} not found try again`);
     }
 
     const enrollments = await prisma.studentEnrollment.findMany({
