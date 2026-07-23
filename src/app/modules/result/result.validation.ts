@@ -59,5 +59,16 @@ const calculatePositions = z.object({
     }),
 });
 
-export const ResultValidation = { create, update, publish, getSectionWiseResults, getCombinedRanking, calculatePositions };
+const getResultsByRoll = z.object({
+    params: z.object({
+        classId: z.string({ error: 'classId is required' }),
+        sectionId: z.string({ error: 'sectionId is required' }),
+        roll: z.string({ error: 'roll is required' }),
+    }),
+    query: z.object({
+        examId: z.string().optional(),
+    }),
+});
+
+export const ResultValidation = { create, update, publish, getSectionWiseResults, getCombinedRanking, calculatePositions , getResultsByRoll};
 

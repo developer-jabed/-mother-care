@@ -47,3 +47,25 @@ export type ICombinedRankingResponse = {
     examCount: number;
     data: ICombinedRankingRow[];
 };
+
+export type IResultByRollFilterRequest = {
+    classId: number;
+    sectionId: number;
+    rollNumber: number;
+    examId?: number; // optional: show one exam, or all published results if omitted
+};
+
+export type IStudentResultProfile = {
+    fullName: string;
+    admissionNumber: string;
+    fatherName: string | null;
+    motherName: string | null;
+    gender: 'MALE' | 'FEMALE' | 'OTHER'; // adjust to match your actual Gender enum values
+    dateOfBirth: Date;
+    phone: string | null;
+    address: string | null;
+    photo: string | null;
+    rollNumber: number;
+    className: string;
+    sectionName: string;
+};

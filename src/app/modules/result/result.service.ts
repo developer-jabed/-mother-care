@@ -1,6 +1,6 @@
 import { Prisma, type Result } from '@prisma/client';
 import httpStatus from 'http-status';
-import type { ICombinedRankingFilterRequest, ICombinedRankingResponse, ICombinedRankingRow, ICreateResultPayload, IResultFilterRequest, ISectionResultFilterRequest } from './result.interface.js';
+import type { ICombinedRankingFilterRequest, ICombinedRankingResponse, ICombinedRankingRow, ICreateResultPayload, IResultByRollFilterRequest, IResultFilterRequest, ISectionResultFilterRequest } from './result.interface.js';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 import { calculateSubjectRawTotal, resolveGrade } from './result.utils.js';
@@ -402,6 +402,54 @@ const calculatePositions = async (
     return { updated: results.length };
 };
 
+const getResultsByRoll = async (filters: IResultByRollFilterRequest) => {
+    const { classId, sectionId, rollNumber, examId } = filters;
+
+    const enrollment = await prisma.studentEnrollment.findFirst({
+        where: { classId, sectionId, rollNumber, isCurrent: true },
+        include: { student: true, class: true, section: true },
+    });
+
+    if (!enrollment) {
+        throw new ApiError(httpStatus.NOT_FOUND, 'No student found for this class, section, and roll number');
+    }
+
+    const results = await prisma.result.findMany({
+        where: {
+            studentEnrollmentId: enrollment.id,
+            isPublished: true,
+            ...(examId !== undefined ? { examId } : {}),
+        },
+        include: {
+            details: { include: { subject: true } },
+            exam: true,
+        },
+        orderBy: { exam: { startDate: 'desc' } },
+    });
+
+    if (results.length === 0) {
+        throw new ApiError(httpStatus.NOT_FOUND, 'No published results found for this student');
+    }
+
+    return {
+        student: {
+            fullName: enrollment.student.fullName,
+            admissionNumber: enrollment.student.admissionNumber,
+            fatherName: enrollment.student.fatherName,
+            motherName: enrollment.student.motherName,
+            gender: enrollment.student.gender,
+            dateOfBirth: enrollment.student.dateOfBirth,
+            phone: enrollment.student.phone,
+            address: enrollment.student.address,
+            photo: enrollment.student.photo,
+            rollNumber: enrollment.rollNumber,
+            className: enrollment.class.name,
+            sectionName: enrollment.section.name,
+        },
+        results,
+    };
+};
+
 const getCombinedRanking = async (
     filters: ICombinedRankingFilterRequest
 ): Promise<ICombinedRankingResponse> => {
@@ -498,6 +546,7 @@ export const ResultService = {
     getSingleResult,
     updateResult,
     getCombinedRanking,
+    getResultsByRoll,
     publishResult,
     getSectionWiseResults,
     calculatePositions,

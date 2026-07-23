@@ -25,6 +25,12 @@ export default async function resultRoutes(fastify: FastifyInstance) {
         ResultController.getCombinedRanking
     );
 
+    fastify.get(
+        '/by-roll/:classId/:sectionId/:roll',
+        { preHandler: [validateRequest(ResultValidation.getResultsByRoll)] },
+        ResultController.getResultsByRoll
+    );
+
     fastify.get('/:id', ResultController.getSingleResult);
 
     fastify.post(

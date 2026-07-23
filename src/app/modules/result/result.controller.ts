@@ -115,6 +115,29 @@ const getSectionWiseResults = catchAsync(async (request, reply) => {
 });
 
 
+const getResultsByRoll = catchAsync(async (request, reply) => {
+    const { classId, sectionId, roll } = request.params as {
+        classId: string;
+        sectionId: string;
+        roll: string;
+    };
+    const { examId } = request.query as { examId?: string };
+
+    const result = await ResultService.getResultsByRoll({
+        classId: Number(classId),
+        sectionId: Number(sectionId),
+        rollNumber: Number(roll),
+        examId: examId ? Number(examId) : undefined,
+    });
+
+    return sendResponse(reply, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: 'Result retrieved successfully',
+        data: result,
+    });
+});
+
 const calculatePositions = catchAsync(async (request, reply) => {
     const { examId } = request.params as { examId: string };
     const { classId, sectionId } = request.query as { classId: string; sectionId: string };
@@ -150,6 +173,7 @@ export const ResultController = {
     getAllResults,
     getSingleResult,
     getSectionWiseResults,
+    getResultsByRoll,
     updateResult,
     getCombinedRanking,
     publishResult,

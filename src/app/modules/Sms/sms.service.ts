@@ -4,6 +4,8 @@ import ApiError from '../../errors/api.error.js';
 import type { FastifyInstance } from 'fastify';
 import type { ISmsJobData, ISendResultSmsPayload } from './sms.interface.js';
 
+const APP_URL = process.env.APP_URL!;
+
 const buildResultSmsText = (params: {
     studentName: string;
     examName: string;
@@ -12,10 +14,27 @@ const buildResultSmsText = (params: {
     totalSubjects: number;
     grade: string;
     position: number | null;
+    classId: number;
+    sectionId: number;
+    rollNumber: number;
 }) => {
-    const { studentName, examName, totalMarks, totalFullMarks, totalSubjects, grade, position } = params;
+    const {
+        studentName,
+        examName,
+        totalMarks,
+        totalFullMarks,
+        totalSubjects,
+        grade,
+        position,
+        classId,
+        sectionId,
+        rollNumber,
+    } = params;
+
     const rankText = position ? `, Rank: ${position}` : '';
-    return `Dear Guardian, ${studentName}'s ${examName} result: ${totalMarks}/${totalFullMarks} (${totalSubjects} subjects), Grade: ${grade}${rankText}.`;
+    const resultUrl = `${APP_URL}/student/${classId}/${sectionId}/${rollNumber}`;
+
+    return `Dear Guardian, ${studentName}'s ${examName} result: ${totalMarks}/${totalFullMarks} (${totalSubjects} subjects), Grade: ${grade}${rankText}. View: ${resultUrl}`;
 };
 
 const queueResultSmsForExam = async (
@@ -86,6 +105,9 @@ const queueResultSmsForExam = async (
             totalSubjects: details.length,
             grade: result.grade,
             position: result.position,
+            classId: enrollment.classId,
+            sectionId: enrollment.sectionId,
+            rollNumber: enrollment.rollNumber,
         });
 
         jobs.push({
