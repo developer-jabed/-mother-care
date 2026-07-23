@@ -147,7 +147,7 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
 
     const pages = await Promise.all(
         cards.map(async (card) => {
-            const qrPayload = `${process.env.APP_URL}/api/v1/admit-cards/verify/${card.student.studentEnrollmentId}/${card.exam.examId}`;
+            const qrPayload = `${process.env.FRONTEND_URL}/admit-cards/verify/${card.student.studentEnrollmentId}/${card.exam.examId}`;
             const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 100, margin: 0 });
 
             const rowCount = card.schedule.length;

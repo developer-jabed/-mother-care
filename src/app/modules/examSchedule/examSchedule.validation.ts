@@ -45,14 +45,13 @@ const deleteSchedule = z.object({
 });
 
 const getMany = z.object({
-    querystring: z.object({
+    query: z.object({
         examId: z.string().regex(/^\d+$/).optional(),
         classId: z.string().regex(/^\d+$/).optional(),
         sectionId: z.string().regex(/^\d+$/).optional(),
         subjectId: z.string().regex(/^\d+$/).optional(),
     }),
 });
-
 export const ExamScheduleValidation = {
     create,
     update,
