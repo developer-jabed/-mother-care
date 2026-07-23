@@ -1,5 +1,6 @@
 import chromium from '@sparticuz/chromium';
 import puppeteer, { type Browser } from 'puppeteer-core';
+import { PDFDocument } from 'pdf-lib';
 import QRCode from 'qrcode';
 import httpStatus from 'http-status';
 import fs from 'fs/promises';
@@ -17,6 +18,8 @@ import type {
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 import { fileUploader } from '../../helper/fileUploader.js';
+
+const BATCH_SIZE = 10;
 
 let browserInstance: Browser | null = null;
 
@@ -83,7 +86,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
             const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 130, margin: 1 });
 
             const rowCount = card.schedule.length;
-            // density class: fewer subjects => roomier rows, more subjects => compact rows
             const densityClass =
                 rowCount <= 5 ? 'roomy' : rowCount <= 8 ? 'normal' : 'compact';
 
@@ -255,7 +257,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 z-index: 2;
             }
 
-            /* ===== Header ===== */
             .header {
                 display: flex;
                 align-items: center;
@@ -308,7 +309,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 font-weight: 600;
             }
 
-            /* ===== Body ===== */
             .body {
                 display: flex;
                 gap: 26px;
@@ -368,7 +368,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
             }
             .qr-label { margin-top: 7px; font-size: 9.5px; color: #555; font-weight: 500; }
 
-            /* ===== Schedule ===== */
             .schedule-title {
                 font-size: 13.5px;
                 font-weight: 700;
@@ -426,8 +425,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
             }
             .time-arrow { margin: 0 6px; color: #8b6f47; font-weight: 700; }
 
-            /* Density variants control row padding + margins so the card
-               fills the page evenly whether it has 5, 7, or 10 subjects */
             .admit-card.roomy table.schedule th,
             .admit-card.roomy table.schedule td { padding: 15px 14px; }
             .admit-card.roomy .schedule { margin: 22px 0 34px; }
@@ -455,7 +452,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 margin: 20px 0;
             }
 
-            /* ===== Footer ===== */
             .footer {
                 display: flex;
                 justify-content: space-between;
@@ -490,6 +486,22 @@ const generatePdfBuffer = async (html: string): Promise<Buffer> => {
     }
 };
 
+/**
+ * Merge multiple single-batch PDF buffers into one final PDF document.
+ */
+const mergePdfBuffers = async (buffers: Buffer[]): Promise<Buffer> => {
+    const mergedPdf = await PDFDocument.create();
+
+    for (const buffer of buffers) {
+        const doc = await PDFDocument.load(buffer);
+        const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
+        copiedPages.forEach((p) => mergedPdf.addPage(p));
+    }
+
+    const mergedBytes = await mergedPdf.save();
+    return Buffer.from(mergedBytes);
+};
+
 // Cloudinary Upload Helper
 const uploadAdmitCardToCloudinary = async (pdfBuffer: Buffer, examName: string, studentName?: string): Promise<string> => {
     const cleanExam = examName.replace(/[^a-zA-Z0-9]/g, '-');
@@ -506,7 +518,8 @@ const uploadAdmitCardToCloudinary = async (pdfBuffer: Buffer, examName: string, 
 };
 
 /**
- * Core generation function
+ * Core generation function — renders in small batches to keep each
+ * Chromium pass fast/lightweight, then merges into one PDF.
  */
 const generateAdmitCardsForEnrollments = async (
     enrollmentIds: number[],
@@ -597,8 +610,21 @@ const generateAdmitCardsForEnrollments = async (
         };
     }
 
-    const html = await renderAdmitCardHtml(cards);
-    const pdfBuffer = await generatePdfBuffer(html);
+    // ── Render in small batches to keep each Chromium pass fast & light on memory ──
+    const batches: IAdmitCardData[][] = [];
+    for (let i = 0; i < cards.length; i += BATCH_SIZE) {
+        batches.push(cards.slice(i, i + BATCH_SIZE));
+    }
+
+    const batchPdfBuffers: Buffer[] = [];
+    for (const batch of batches) {
+        const html = await renderAdmitCardHtml(batch);
+        const buffer = await generatePdfBuffer(html);
+        batchPdfBuffers.push(buffer);
+    }
+
+    const pdfBuffer =
+        batchPdfBuffers.length === 1 ? batchPdfBuffers[0] : await mergePdfBuffers(batchPdfBuffers);
 
     let cloudinaryUrl: string | undefined = undefined;
     try {
@@ -634,18 +660,15 @@ const getSectionEnrollmentIds = async (classId: number, sectionId: number): Prom
 const generateSingleAdmitCard = async (
     studentEnrollmentId: number,
     examId: number
-): Promise<{ pdfBuffer: Buffer; cloudinaryUrl: string }> => {
+): Promise<Buffer> => {
     const result = await generateAdmitCardsForEnrollments([studentEnrollmentId], examId);
 
     if (!result.pdfBuffer) {
         const reason = result.failed[0]?.reason ?? 'Unknown error';
         throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to generate admit card: ${reason}`);
     }
-    if (!result.cloudinaryUrl) {
-        throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'Failed to upload admit card to Cloudinary');
-    }
 
-    return { pdfBuffer: result.pdfBuffer, cloudinaryUrl: result.cloudinaryUrl };
+    return result.pdfBuffer;
 };
 
 export const AdmitCardService = {

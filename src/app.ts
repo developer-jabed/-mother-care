@@ -18,6 +18,8 @@ import './app/modules/admitCard/admitCard.worker.js';
 // side-effect import — starts the BullMQ worker listening on 'smsQueue'
 import "./app/modules/Sms/sms.worker.js";
 import { startKeepAliveCron } from "./app/shared/keepAlive.js";
+import { AdmitCardService } from './app/modules/admitCard/admitCard.service.js';
+
 
 const require = createRequire(import.meta.url);
 
@@ -95,6 +97,7 @@ const buildApp = async () => {
   // ── Redis ──────────────────────────────────────────────────
 
   await app.register(queuePlugin);
+  AdmitCardService.warmupBrowser();
 
   // ── Lifecycle hooks ────────────────────────────────────────
   app.addHook("onReady", () => {
