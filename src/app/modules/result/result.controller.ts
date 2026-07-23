@@ -69,9 +69,61 @@ const publishResult = catchAsync(async (request, reply) => {
     });
 });
 
+
+const getCombinedRanking = catchAsync(async (request, reply) => {
+    const { classId, sectionId, examIds } = request.query as {
+        classId: string;
+        sectionId: string;
+        examIds?: number[];
+    };
+
+    const result = await ResultService.getCombinedRanking({
+        classId: Number(classId),
+        sectionId: Number(sectionId),
+        examIds,
+    });
+
+    return sendResponse(reply, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: 'Combined ranking retrieved successfully',
+        data: result,
+    });
+});
+
+
+
+const getSectionWiseResults = catchAsync(async (request, reply) => {
+    const { examId, classId, sectionId } = request.query as {
+        examId: string;
+        classId: string;
+        sectionId: string;
+    };
+
+    const result = await ResultService.getSectionWiseResults({
+        examId: Number(examId),
+        classId: Number(classId),
+        sectionId: Number(sectionId),
+    });
+
+    return sendResponse(reply, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: 'Section-wise results retrieved successfully',
+        data: result,
+    });
+});
+
+
 const calculatePositions = catchAsync(async (request, reply) => {
     const { examId } = request.params as { examId: string };
-    const result = await ResultService.calculatePositions(Number(examId));
+    const { classId, sectionId } = request.query as { classId: string; sectionId: string };
+
+    const result = await ResultService.calculatePositions(
+        Number(examId),
+        Number(classId),
+        Number(sectionId)
+    );
 
     return sendResponse(reply, {
         statusCode: httpStatus.OK,
@@ -97,7 +149,9 @@ export const ResultController = {
     createResult,
     getAllResults,
     getSingleResult,
+    getSectionWiseResults,
     updateResult,
+    getCombinedRanking,
     publishResult,
     calculatePositions,
     deleteResult,

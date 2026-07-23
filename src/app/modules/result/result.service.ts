@@ -1,6 +1,6 @@
 import { Prisma, type Result } from '@prisma/client';
 import httpStatus from 'http-status';
-import type { ICreateResultPayload, IResultFilterRequest } from './result.interface.js';
+import type { ICombinedRankingFilterRequest, ICombinedRankingResponse, ICombinedRankingRow, ICreateResultPayload, IResultFilterRequest, ISectionResultFilterRequest } from './result.interface.js';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 import { calculateSubjectRawTotal, resolveGrade } from './result.utils.js';
@@ -134,13 +134,20 @@ const createResult = async (payload: ICreateResultPayload): Promise<Result> => {
 
     return result;
 };
-
 const getAllResults = async (
     filters: IResultFilterRequest,
     paginationOptions: PaginationResult
 ) => {
     const { skip, take, sortBy, sortOrder } = paginationOptions;
-    const { searchTerm, examId, studentEnrollmentId, isPublished, ...restFilters } = filters;
+    const {
+        searchTerm,
+        examId,
+        studentEnrollmentId,
+        classId,
+        sectionId,
+        isPublished,
+        ...restFilters
+    } = filters;
 
     const andConditions: Prisma.ResultWhereInput[] = [];
 
@@ -160,9 +167,21 @@ const getAllResults = async (
         andConditions.push({ studentEnrollmentId: Number(studentEnrollmentId) });
     }
 
+    // ── Filter by the enrollment's class/section (Result → StudentEnrollment) ──
+    if (classId !== undefined || sectionId !== undefined) {
+        andConditions.push({
+            enrollment: {
+                is: {
+                    ...(classId !== undefined ? { classId: Number(classId) } : {}),
+                    ...(sectionId !== undefined ? { sectionId: Number(sectionId) } : {}),
+                },
+            },
+        });
+    }
+
     if (isPublished !== undefined) {
         andConditions.push({
-            isPublished: isPublished === true || String(isPublished) === "true",
+            isPublished: isPublished === true || String(isPublished) === 'true',
         });
     }
 
@@ -195,6 +214,78 @@ const getAllResults = async (
 
     return { meta, data: result };
 };
+
+
+const getSectionWiseResults = async (filters: ISectionResultFilterRequest) => {
+    const { examId, classId, sectionId } = filters;
+
+    const exam = await prisma.exam.findUnique({ where: { id: examId } });
+    if (!exam) {
+        throw new ApiError(httpStatus.NOT_FOUND, 'Exam not found');
+    }
+
+    // Pull every current enrollment in this class+section, whether or not they
+    // have a result yet, so the ranking sheet always shows the full roster.
+    const enrollments = await prisma.studentEnrollment.findMany({
+        where: {
+            classId,
+            sectionId,
+            academicYearId: exam.academicYearId,
+            isCurrent: true,
+        },
+        include: {
+            student: true,
+            results: {
+                where: { examId },
+                include: { details: { include: { subject: true } } },
+            },
+        },
+        orderBy: { rollNumber: 'asc' },
+    });
+
+    const rows = enrollments.map(enrollment => {
+        const result = enrollment.results[0] ?? null;
+
+        return {
+            studentEnrollmentId: enrollment.id,
+            studentId: enrollment.studentId,
+            name: enrollment.student.fullName,
+            rollNumber: enrollment.rollNumber,
+            hasResult: Boolean(result),
+            resultId: result?.id ?? null,
+            totalMarks: result?.totalMarks ?? null,
+            percentage: result?.percentage ?? null,
+            grade: result?.grade ?? null,
+            gradePoint: result?.gradePoint ?? null,
+            isPublished: result?.isPublished ?? false,
+            position: result?.position ?? null,
+            details: result?.details ?? [],
+        };
+    });
+
+    // Rank by percentage desc; students without a result sink to the bottom.
+    rows.sort((a, b) => {
+        if (a.percentage === null && b.percentage === null) return 0;
+        if (a.percentage === null) return 1;
+        if (b.percentage === null) return -1;
+        return b.percentage - a.percentage;
+    });
+
+    const ranked = rows.map((row, index) => ({
+        ...row,
+        rank: row.percentage !== null ? index + 1 : null,
+    }));
+
+    return {
+        examId,
+        examName: exam.name,
+        classId,
+        sectionId,
+        totalStudents: ranked.length,
+        data: ranked,
+    };
+};
+
 
 const getSingleResult = async (id: number): Promise<Result> => {
     const result = await prisma.result.findUnique({
@@ -279,14 +370,24 @@ const publishResult = async (id: number, isPublished: boolean): Promise<Result> 
     return result;
 };
 
-const calculatePositions = async (examId: number): Promise<{ updated: number }> => {
+const calculatePositions = async (
+    examId: number,
+    classId: number,
+    sectionId: number
+): Promise<{ updated: number }> => {
     const results = await prisma.result.findMany({
-        where: { examId },
+        where: {
+            examId,
+            enrollment: {
+                classId,
+                sectionId,
+            },
+        },
         orderBy: { percentage: 'desc' },
     });
 
     if (results.length === 0) {
-        throw new ApiError(httpStatus.NOT_FOUND, 'No results found for this exam');
+        throw new ApiError(httpStatus.NOT_FOUND, 'No results found for this exam in the selected class and section');
     }
 
     await prisma.$transaction(
@@ -300,6 +401,81 @@ const calculatePositions = async (examId: number): Promise<{ updated: number }> 
 
     return { updated: results.length };
 };
+
+const getCombinedRanking = async (
+    filters: ICombinedRankingFilterRequest
+): Promise<ICombinedRankingResponse> => {
+    const { classId, sectionId, examIds } = filters;
+
+    const enrollments = await prisma.studentEnrollment.findMany({
+        where: { classId, sectionId },
+        include: { student: true },
+    });
+
+    if (enrollments.length === 0) {
+        throw new ApiError(httpStatus.NOT_FOUND, 'No students found in this class and section');
+    }
+
+    const enrollmentIds = enrollments.map((e) => e.id);
+
+    const results = await prisma.result.findMany({
+        where: {
+            studentEnrollmentId: { in: enrollmentIds },
+            isPublished: true,
+            ...(examIds && examIds.length > 0 ? { examId: { in: examIds } } : {}),
+        },
+        select: {
+            studentEnrollmentId: true,
+            examId: true,
+            percentage: true,
+        },
+    });
+
+    const examIdSet = new Set(results.map((r) => r.examId));
+
+    const byStudent = new Map<number, { totalPercentage: number; examCount: number }>();
+
+    for (const result of results) {
+        if (result.percentage === null) continue;
+        const key = result.studentEnrollmentId;
+        const existing = byStudent.get(key) ?? { totalPercentage: 0, examCount: 0 };
+        existing.totalPercentage += result.percentage;
+        existing.examCount += 1;
+        byStudent.set(key, existing);
+    }
+
+    const rows: ICombinedRankingRow[] = enrollments.map((enrollment) => {
+        const agg = byStudent.get(enrollment.id);
+        const averagePercentage = agg && agg.examCount > 0
+            ? Number((agg.totalPercentage / agg.examCount).toFixed(2))
+            : null;
+
+        return {
+            studentEnrollmentId: enrollment.id,
+            rollNumber: enrollment.rollNumber ?? null,
+            name: enrollment.student.fullName, // fixed: was `name`
+            examCount: agg?.examCount ?? 0,
+            averagePercentage,
+            rank: null,
+        };
+    });
+
+    const withResults = rows
+        .filter((r) => r.averagePercentage !== null)
+        .sort((a, b) => b.averagePercentage! - a.averagePercentage!);
+    const withoutResults = rows.filter((r) => r.averagePercentage === null);
+
+    withResults.forEach((row, index) => {
+        row.rank = index + 1;
+    });
+
+    return {
+        totalStudents: enrollments.length,
+        examCount: examIdSet.size,
+        data: [...withResults, ...withoutResults],
+    };
+};
+
 
 const deleteResult = async (id: number): Promise<Result> => {
     const existing = await getSingleResult(id);
@@ -321,7 +497,9 @@ export const ResultService = {
     getAllResults,
     getSingleResult,
     updateResult,
+    getCombinedRanking,
     publishResult,
+    getSectionWiseResults,
     calculatePositions,
     deleteResult,
 };

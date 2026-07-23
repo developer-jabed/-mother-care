@@ -32,4 +32,32 @@ const publish = z.object({
     }),
 });
 
-export const ResultValidation = { create, update, publish };
+const getSectionWiseResults = z.object({
+    query: z.object({
+        examId: z.string({ error: 'examId is required' }),
+        classId: z.string({ error: 'classId is required' }),
+        sectionId: z.string({ error: 'sectionId is required' }),
+    }),
+});
+
+const getCombinedRanking = z.object({
+    query: z.object({
+        classId: z.string({ error: 'classId is required' }),
+        sectionId: z.string({ error: 'sectionId is required' }),
+        examIds: z
+            .string()
+            .optional()
+            .transform((val) => (val ? val.split(',').map(Number) : undefined)),
+    }),
+});
+
+
+const calculatePositions = z.object({
+    query: z.object({
+        classId: z.string({ error: 'classId is required' }),
+        sectionId: z.string({ error: 'sectionId is required' }),
+    }),
+});
+
+export const ResultValidation = { create, update, publish, getSectionWiseResults, getCombinedRanking, calculatePositions };
+

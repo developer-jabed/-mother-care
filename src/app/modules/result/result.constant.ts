@@ -2,6 +2,8 @@ export const resultFilterableFields: string[] = [
     'searchTerm',
     'studentEnrollmentId',
     'examId',
+    'classId',
+    'sectionId',
     'isPublished',
 ];
 

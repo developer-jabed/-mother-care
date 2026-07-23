@@ -4,13 +4,16 @@ import helmet from "@fastify/helmet";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import fastifyRateLimit from "@fastify/rate-limit";
+import fastifyStatic from "@fastify/static";
 import pinoPretty from "pino-pretty";
+import path from "path";
 import { createRequire } from "module";
 
 import queuePlugin from "./app/shared/queue.js";
 import globalErrorHandler from "./app/middlewares/globalErrorHandler.js";
 import notFound from "./app/middlewares/notFound.js";
 import registerRoutes from "./app/routes/index.js";
+import './app/modules/admitCard/admitCard.worker.js';
 
 // side-effect import — starts the BullMQ worker listening on 'smsQueue'
 import "./app/modules/Sms/sms.worker.js";
@@ -83,8 +86,13 @@ const buildApp = async () => {
     },
   });
 
-  // ── Redis ──────────────────────────────────────────────────
+  // ── Static files (admit card PDFs, etc.) ──────────────────
+  await app.register(fastifyStatic, {
+    root: path.join(process.cwd(), "public"),
+    prefix: "/",
+  });
 
+  // ── Redis ──────────────────────────────────────────────────
 
   await app.register(queuePlugin);
 

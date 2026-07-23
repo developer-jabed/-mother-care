@@ -12,6 +12,8 @@ import resultRoutes from "../modules/result/result.route.js";
 import gradingScaleRoutes from "../modules/gradingScale/gradingScale.route.js";
 import smsRoutes from "../modules/Sms/sms.route.js";
 import dashboardRoutes from "../modules/dashboard/dashboard.route.js";
+import admitCardRoutes from "../modules/admitCard/admitCard.route.js";
+import examScheduleRoutes from "../modules/examSchedule/examSchedule.route.js";
 
 async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   // Health Check
@@ -23,8 +25,8 @@ async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   }));
 
   // Register Academic Year Routes
-  fastify.register(academicYearRoutes, { 
-    prefix: "/academic-years" 
+  fastify.register(academicYearRoutes, {
+    prefix: "/academic-years"
   });
 
   fastify.register(classRoutes, {
@@ -35,7 +37,7 @@ async function registerRoutes(fastify: FastifyInstance): Promise<void> {
     prefix: "/students"
   });
 
-  
+
   fastify.register(studentEnrollmentRoutes, {
     prefix: "/student-enrollments"
   });
@@ -74,6 +76,12 @@ async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.register(dashboardRoutes, {
     prefix: "/dashboard"
   });
+
+  fastify.register(admitCardRoutes, {
+    prefix: "admit-cards"
+  });
+
+  fastify.register(examScheduleRoutes, { prefix: '/exam-schedules' });
 }
 
 export default registerRoutes;

@@ -72,6 +72,7 @@ model Class {
   sections      Section[]
   enrollments   StudentEnrollment[]
   classSubjects ClassSubject[]
+  examSchedules ExamSchedule[]
 }
 
 model Section {
@@ -156,6 +157,7 @@ model Subject {
   isOptional Boolean @default(false)
 
   classSubjects ClassSubject[]
+  examSchedules ExamSchedule[]
   resultDetails ResultDetail[]
 }
 
@@ -187,6 +189,7 @@ model Exam {
   academicYear   AcademicYear @relation(fields: [academicYearId], references: [id], onDelete: Cascade)
   examType       ExamType     @relation(fields: [examTypeId], references: [id], onDelete: Restrict)
   results        Result[]
+  schedules      ExamSchedule[]
   smsLogs        SmsLog[]
   smsSentAt      DateTime?
 }
@@ -197,6 +200,25 @@ model ExamType {
   weight    Float? @db.DoublePrecision
 
   exams     Exam[]
+}
+
+
+model ExamSchedule {
+  id         Int      @id @default(autoincrement())
+  examId     Int
+  subjectId  Int
+  classId    Int
+  sectionId  Int?
+  examDate   DateTime
+  startTime  DateTime
+  endTime    DateTime
+  roomNumber String?
+
+  exam       Exam    @relation(fields: [examId], references: [id], onDelete: Cascade)
+  subject    Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  class      Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, subjectId, classId])
 }
 
 model Result {
