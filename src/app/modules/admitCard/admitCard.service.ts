@@ -1,5 +1,5 @@
 import chromium from '@sparticuz/chromium';
-import puppeteer, { type Browser } from 'puppeteer-core';
+import puppeteerCore, { type Browser } from 'puppeteer-core';
 import { PDFDocument } from 'pdf-lib';
 import QRCode from 'qrcode';
 import httpStatus from 'http-status';
@@ -20,16 +20,26 @@ import ApiError from '../../errors/api.error.js';
 import { fileUploader } from '../../helper/fileUploader.js';
 
 const BATCH_SIZE = 10;
+const isLocalDev = process.env.NODE_ENV !== 'production';
 
 let browserInstance: Browser | null = null;
 
 const getBrowser = async (): Promise<Browser> => {
     if (!browserInstance || !browserInstance.connected) {
-        browserInstance = await puppeteer.launch({
-            args: chromium.args,
-            executablePath: await chromium.executablePath(),
-            headless: true,
-        });
+        if (isLocalDev) {
+            // Local dev machine (Windows/Mac/Linux) — use full puppeteer's own bundled Chrome
+            const puppeteer = await import('puppeteer');
+            browserInstance = (await puppeteer.default.launch({
+                headless: true,
+            })) as unknown as Browser;
+        } else {
+            // Production (Render/OCI Linux) — serverless-friendly Chromium binary
+            browserInstance = await puppeteerCore.launch({
+                args: chromium.args,
+                executablePath: await chromium.executablePath(),
+                headless: true,
+            });
+        }
     }
     return browserInstance;
 };
@@ -76,6 +86,61 @@ const getBengaliFontBase64 = async (): Promise<string> => {
     return bengaliFontBase64Cache;
 };
 
+// ── Student photo handling ──────────────────────────────────────────
+
+/**
+ * Rewrite a Cloudinary URL to request a small, pre-cropped, auto-quality
+ * thumbnail instead of the original full-resolution upload. Dramatically
+ * reduces network transfer + Chromium image-decode time per card.
+ */
+const toCloudinaryThumbnail = (url: string): string => {
+    if (!url.includes('/upload/')) return url; // not a Cloudinary URL, leave as-is
+    return url.replace('/upload/', '/upload/w_200,h_240,c_fill,q_auto,f_auto/');
+};
+
+/**
+ * Fetch a photo URL and convert it to a base64 data URI, so Chromium never
+ * has to make its own network request during page.setContent(). Failures
+ * are swallowed — the card just falls back to the "no photo" placeholder.
+ */
+const fetchPhotoAsBase64 = async (url: string): Promise<string | null> => {
+    try {
+        const response = await fetch(url);
+        if (!response.ok) return null;
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        const contentType = response.headers.get('content-type') ?? 'image/jpeg';
+        return `data:${contentType};base64,${buffer.toString('base64')}`;
+    } catch (error) {
+        console.error('Failed to pre-fetch student photo:', error);
+        return null;
+    }
+};
+
+/**
+ * Pre-fetch every student photo in the batch concurrently, once, before any
+ * Chromium rendering starts. Returns a map of enrollmentId -> base64 data URI.
+ */
+const preloadPhotos = async (
+    enrollments: { id: number; photo: string | null }[]
+): Promise<Map<number, string | null>> => {
+    const photoCache = new Map<number, string | null>();
+
+    await Promise.all(
+        enrollments.map(async (enrollment) => {
+            if (!enrollment.photo) {
+                photoCache.set(enrollment.id, null);
+                return;
+            }
+            const thumbnailUrl = toCloudinaryThumbnail(enrollment.photo);
+            const base64 = await fetchPhotoAsBase64(thumbnailUrl);
+            photoCache.set(enrollment.id, base64);
+        })
+    );
+
+    return photoCache;
+};
+
 const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => {
     const { logo } = await getBrandAssets();
     const bengaliFont = await getBengaliFontBase64();
@@ -83,7 +148,7 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
     const pages = await Promise.all(
         cards.map(async (card) => {
             const qrPayload = `${process.env.APP_URL}/api/v1/admit-cards/verify/${card.student.studentEnrollmentId}/${card.exam.examId}`;
-            const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 130, margin: 1 });
+            const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 100, margin: 0 });
 
             const rowCount = card.schedule.length;
             const densityClass =
@@ -478,7 +543,9 @@ const generatePdfBuffer = async (html: string): Promise<Buffer> => {
     const browser = await getBrowser();
     const page = await browser.newPage();
     try {
-        await page.setContent(html, { waitUntil: 'load' });
+        // domcontentloaded is sufficient now since photos/logo/font/QR are all
+        // base64-embedded — no external network fetches happen during render.
+        await page.setContent(html, { waitUntil: 'domcontentloaded' });
         const pdfBuffer = await page.pdf({ format: 'a4', printBackground: true });
         return Buffer.from(pdfBuffer);
     } finally {
@@ -518,8 +585,8 @@ const uploadAdmitCardToCloudinary = async (pdfBuffer: Buffer, examName: string, 
 };
 
 /**
- * Core generation function — renders in small batches to keep each
- * Chromium pass fast/lightweight, then merges into one PDF.
+ * Core generation function — pre-fetches photos, renders in small batches,
+ * then merges into one PDF.
  */
 const generateAdmitCardsForEnrollments = async (
     enrollmentIds: number[],
@@ -584,6 +651,11 @@ const generateAdmitCardsForEnrollments = async (
         endDate: exam.endDate,
     };
 
+    // ── Pre-fetch every student photo once, concurrently, as small base64 thumbnails ──
+    const photoCache = await preloadPhotos(
+        enrollments.map((e) => ({ id: e.id, photo: e.student.photo }))
+    );
+
     const cards: IAdmitCardData[] = enrollments.map((enrollment) => {
         const student: IAdmitCardStudentData = {
             studentEnrollmentId: enrollment.id,
@@ -592,7 +664,7 @@ const generateAdmitCardsForEnrollments = async (
             fatherName: enrollment.student.fatherName,
             motherName: enrollment.student.motherName,
             rollNumber: enrollment.rollNumber,
-            photo: enrollment.student.photo,
+            photo: photoCache.get(enrollment.id) ?? null, // base64 thumbnail, or null for placeholder
             className: enrollment.class.name,
             sectionName: enrollment.section.name,
         };
