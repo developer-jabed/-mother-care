@@ -17,7 +17,7 @@ const smsWorker = new Worker(
         const { studentEnrollmentId, examId, phone, message } = job.data;
 
         try {
-            console.log(`📤 [${job.id}] Sending to ${phone}`);
+            console.log(`📤 [${job.id}] Sending to ${phone} perfectly `);
 
             const result = await sendSmsViaBulkSmsBD(phone, message);
 
