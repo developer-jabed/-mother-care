@@ -31,8 +31,22 @@ const getBrowser = async (): Promise<Browser> => {
     return browserInstance;
 };
 
-// Logo cache
+/**
+ * Pre-warm the browser at server startup so the first real request
+ * doesn't pay the Chromium boot/extraction cost.
+ */
+const warmupBrowser = async (): Promise<void> => {
+    try {
+        await getBrowser();
+        console.log('Puppeteer browser pre-warmed successfully');
+    } catch (error) {
+        console.error('Failed to pre-warm Puppeteer browser:', error);
+    }
+};
+
+// ── Asset caches (logo + Bengali font) ──────────────────────────────
 let logoBase64Cache: string | null = null;
+let bengaliFontBase64Cache: string | null = null;
 
 const loadAssetAsBase64 = async (filePath: string): Promise<string> => {
     const buffer = await fs.readFile(filePath);
@@ -49,8 +63,19 @@ const getBrandAssets = async () => {
     return { logo: logoBase64Cache };
 };
 
+const getBengaliFontBase64 = async (): Promise<string> => {
+    if (!bengaliFontBase64Cache) {
+        const buffer = await fs.readFile(
+            path.join(process.cwd(), 'public', 'fonts', 'NotoSansBengali-Regular.ttf')
+        );
+        bengaliFontBase64Cache = buffer.toString('base64');
+    }
+    return bengaliFontBase64Cache;
+};
+
 const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => {
     const { logo } = await getBrandAssets();
+    const bengaliFont = await getBengaliFontBase64();
 
     const pages = await Promise.all(
         cards.map(async (card) => {
@@ -171,10 +196,17 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
     <head>
         <meta charset="utf-8" />
         <style>
+            @font-face {
+                font-family: 'Noto Sans Bengali';
+                src: url(data:font/ttf;base64,${bengaliFont}) format('truetype');
+                font-weight: normal;
+                font-style: normal;
+            }
+
             @page { size: A4; margin: 8mm; }
             * { box-sizing: border-box; }
             body {
-                font-family: 'Noto Sans', 'Segoe UI', sans-serif;
+                font-family: 'Noto Sans Bengali', 'Noto Sans', 'Segoe UI', sans-serif;
                 margin: 0;
                 background: #f8f5f0;
             }
@@ -445,6 +477,7 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
     <body>${pages.join('')}</body>
     </html>`;
 };
+
 const generatePdfBuffer = async (html: string): Promise<Buffer> => {
     const browser = await getBrowser();
     const page = await browser.newPage();
@@ -483,7 +516,7 @@ const generateAdmitCardsForEnrollments = async (
 
     const exam = await prisma.exam.findUnique({ where: { id: examId } });
     if (!exam) {
-        throw new ApiError(httpStatus.NOT_FOUND, `Exam ${examId} not found try again`);
+        throw new ApiError(httpStatus.NOT_FOUND, `Exam ${examId} not found`);
     }
 
     const enrollments = await prisma.studentEnrollment.findMany({
@@ -619,4 +652,5 @@ export const AdmitCardService = {
     getSectionEnrollmentIds,
     generateAdmitCardsForEnrollments,
     generateSingleAdmitCard,
+    warmupBrowser,
 };
