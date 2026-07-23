@@ -1,4 +1,5 @@
-import puppeteer, { Browser } from 'puppeteer';
+import chromium from '@sparticuz/chromium';
+import puppeteer, { type Browser } from 'puppeteer-core';
 import QRCode from 'qrcode';
 import httpStatus from 'http-status';
 import fs from 'fs/promises';
@@ -21,7 +22,11 @@ let browserInstance: Browser | null = null;
 
 const getBrowser = async (): Promise<Browser> => {
     if (!browserInstance || !browserInstance.connected) {
-        browserInstance = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
+        browserInstance = await puppeteer.launch({
+            args: chromium.args,
+            executablePath: await chromium.executablePath(),
+            headless: true,
+        });
     }
     return browserInstance;
 };
