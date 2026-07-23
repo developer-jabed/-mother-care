@@ -11,9 +11,11 @@ const buildResultSmsText = (params: {
     totalFullMarks: number;
     totalSubjects: number;
     grade: string;
+    position: number | null;
 }) => {
-    const { studentName, examName, totalMarks, totalFullMarks, totalSubjects, grade } = params;
-    return `Dear Guardian, ${studentName}'s ${examName} result: ${totalMarks}/${totalFullMarks} (${totalSubjects} subjects), Grade: ${grade}.`;
+    const { studentName, examName, totalMarks, totalFullMarks, totalSubjects, grade, position } = params;
+    const rankText = position ? `, Rank: ${position}` : '';
+    return `Dear Guardian, ${studentName}'s ${examName} result: ${totalMarks}/${totalFullMarks} (${totalSubjects} subjects), Grade: ${grade}${rankText}.`;
 };
 
 const queueResultSmsForExam = async (
@@ -83,6 +85,7 @@ const queueResultSmsForExam = async (
             totalFullMarks,
             totalSubjects: details.length,
             grade: result.grade,
+            position: result.position,
         });
 
         jobs.push({

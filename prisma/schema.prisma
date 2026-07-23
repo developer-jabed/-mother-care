@@ -93,6 +93,8 @@ model Student {
   userId          Int?     @unique
   admissionNumber String   @unique
   fullName        String
+  fatherName      String?
+  motherName      String?
   gender          Gender
   dateOfBirth     DateTime
   phone           String?

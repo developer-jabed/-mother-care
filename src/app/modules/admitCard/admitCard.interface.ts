@@ -1,12 +1,14 @@
-export type IAdmitCardStudentData = {
+export interface IAdmitCardStudentData {
     studentEnrollmentId: number;
     admissionNumber: string;
     fullName: string;
+    fatherName: string | null;
+    motherName: string | null;
     rollNumber: number;
     photo: string | null;
     className: string;
     sectionName: string;
-};
+}
 
 export type IAdmitCardExamData = {
     examId: number;

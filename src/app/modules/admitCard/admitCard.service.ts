@@ -52,20 +52,42 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
             const qrPayload = `${process.env.APP_URL}/api/v1/admit-cards/verify/${card.student.studentEnrollmentId}/${card.exam.examId}`;
             const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 130, margin: 1 });
 
+            const rowCount = card.schedule.length;
+            // density class: fewer subjects => roomier rows, more subjects => compact rows
+            const densityClass =
+                rowCount <= 5 ? 'roomy' : rowCount <= 8 ? 'normal' : 'compact';
+
             const scheduleRows = card.schedule
-                .map(
-                    (row) => `
+                .map((row, idx) => {
+                    const start = new Date(row.startTime).toLocaleTimeString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                    });
+                    const end = new Date(row.endTime).toLocaleTimeString('en-US', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                    });
+                    return `
                     <tr>
-                        <td>${row.subjectName}</td>
-                        <td>${new Date(row.examDate).toLocaleDateString('en-US')}</td>
-                        <td>${new Date(row.startTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })} - ${new Date(row.endTime).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })}</td>
-                        <td>${row.roomNumber ?? '—'}</td>
-                    </tr>`
-                )
+                        <td class="sl">${idx + 1}</td>
+                        <td class="subj">${row.subjectName}</td>
+                        <td>${new Date(row.examDate).toLocaleDateString('en-US', {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                    })}</td>
+                        <td class="time-cell">
+                            <span class="time-start">${start}</span>
+                            <span class="time-arrow">&rarr;</span>
+                            <span class="time-end">${end}</span>
+                        </td>
+                        <td class="room">${row.roomNumber ?? '—'}</td>
+                    </tr>`;
+                })
                 .join('');
 
             return `
-            <div class="admit-card">
+            <div class="admit-card ${densityClass}">
                 <div class="bg-texture"></div>
                 <div class="watermark">
                     <img src="${logo}" alt="Watermark" />
@@ -76,23 +98,29 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                     <div class="header-text">
                         <div class="school-name">Mother Care School and College</div>
                         <div class="motto">Excellence in Education Since 2025</div>
-                        <div class="title">ADMIT CARD</div>
-                        <div class="exam-name">${card.exam.examName} • ${card.exam.academicYearTitle}</div>
+                        <div class="title-row">
+                            <span class="title">ADMIT CARD</span>
+                            <span class="exam-name">${card.exam.examName} • ${card.exam.academicYearTitle}</span>
+                        </div>
                     </div>
                 </div>
 
                 <div class="body">
                     <div class="photo-box">
-                        ${card.student.photo 
-                            ? `<img src="${card.student.photo}" alt="Student Photo" />` 
-                            : `<div class="no-photo">Photo</div>`}
+                        ${card.student.photo
+                    ? `<img src="${card.student.photo}" alt="Student Photo" />`
+                    : `<div class="no-photo">Photo</div>`}
                     </div>
 
                     <div class="student-info">
-                        <div class="info-row"><strong>Name:</strong> <span>${card.student.fullName}</span></div>
-                        <div class="info-row"><strong>Admission No:</strong> <span>${card.student.admissionNumber}</span></div>
-                        <div class="info-row"><strong>Class:</strong> <span>${card.student.className} • ${card.student.sectionName}</span></div>
-                        <div class="info-row"><strong>Roll No:</strong> <span>${card.student.rollNumber}</span></div>
+                        <div class="info-grid">
+                            <div class="info-row"><span class="label">Name</span><span class="value">${card.student.fullName}</span></div>
+                            <div class="info-row"><span class="label">Admission No</span><span class="value">${card.student.admissionNumber}</span></div>
+                            <div class="info-row"><span class="label">Father's Name</span><span class="value">${card.student.fatherName ?? '—'}</span></div>
+                            <div class="info-row"><span class="label">Mother's Name</span><span class="value">${card.student.motherName ?? '—'}</span></div>
+                            <div class="info-row"><span class="label">Class</span><span class="value">${card.student.className} • ${card.student.sectionName}</span></div>
+                            <div class="info-row"><span class="label">Roll No</span><span class="value roll">${card.student.rollNumber}</span></div>
+                        </div>
                     </div>
 
                     <div class="qr-box">
@@ -101,15 +129,17 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                     </div>
                 </div>
 
-                ${card.schedule.length > 0
+                ${rowCount > 0
                     ? `
+                    <div class="schedule-title">Exam Schedule</div>
                     <table class="schedule">
                         <thead>
                             <tr>
+                                <th class="sl">#</th>
                                 <th>Subject</th>
                                 <th>Date</th>
                                 <th>Time</th>
-                                <th>Room No</th>
+                                <th>Room</th>
                             </tr>
                         </thead>
                         <tbody>${scheduleRows}</tbody>
@@ -138,9 +168,9 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
         <style>
             @page { size: A4; margin: 8mm; }
             * { box-sizing: border-box; }
-            body { 
-                font-family: 'Noto Sans', 'Segoe UI', sans-serif; 
-                margin: 0; 
+            body {
+                font-family: 'Noto Sans', 'Segoe UI', sans-serif;
+                margin: 0;
                 background: #f8f5f0;
             }
 
@@ -148,10 +178,12 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 position: relative;
                 page-break-after: always;
                 border: 3px solid #1a2a44;
-                border-radius: 8px;
-                padding: 28px 32px;
+                border-radius: 10px;
+                padding: 30px 34px;
                 background: #fdfaf3;
                 min-height: 100%;
+                display: flex;
+                flex-direction: column;
                 box-shadow: 0 0 25px rgba(0,0,0,0.15);
                 overflow: hidden;
             }
@@ -162,7 +194,7 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 inset: 0;
                 z-index: 0;
                 opacity: 0.75;
-                background-image: 
+                background-image:
                     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cfilter id='n' x='0' y='0'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.45 0 0 0 0 0.38 0 0 0 0 0.28 0 0 0 0.08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
                     linear-gradient(rgba(245, 240, 230, 0.6), rgba(245, 240, 230, 0.6));
                 background-repeat: repeat;
@@ -176,69 +208,79 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 align-items: center;
                 justify-content: center;
                 z-index: 1;
-                opacity: 0.07;
+                opacity: 0.06;
                 pointer-events: none;
             }
-            .watermark img {
-                width: 52%;
-                filter: grayscale(1);
-            }
+            .watermark img { width: 50%; filter: grayscale(1); }
 
-            .header, .body, .schedule, .footer, .no-schedule {
+            .header, .body, .schedule-title, .schedule, .footer, .no-schedule {
                 position: relative;
                 z-index: 2;
             }
 
+            /* ===== Header ===== */
             .header {
                 display: flex;
                 align-items: center;
                 gap: 20px;
                 border-bottom: 3px double #8b6f47;
-                padding-bottom: 18px;
-                margin-bottom: 24px;
+                padding-bottom: 16px;
+                margin-bottom: 22px;
             }
             .logo {
-                width: 78px;
-                height: 78px;
+                width: 76px;
+                height: 76px;
                 object-fit: contain;
                 border: 3px solid #8b6f47;
                 border-radius: 50%;
                 padding: 4px;
                 background: white;
+                flex-shrink: 0;
             }
             .header-text { flex: 1; }
             .school-name {
-                font-size: 26px;
+                font-size: 25px;
                 font-weight: 800;
                 color: #1a2a44;
-                letter-spacing: 0.5px;
+                letter-spacing: 0.4px;
             }
             .motto {
-                font-size: 13px;
+                font-size: 12.5px;
                 color: #8b6f47;
                 font-style: italic;
-                margin: 4px 0 8px;
+                margin: 3px 0 8px;
+            }
+            .title-row {
+                display: flex;
+                align-items: baseline;
+                gap: 10px;
+                background: #1a2a44;
+                color: #fff;
+                padding: 5px 12px;
+                border-radius: 4px;
+                width: fit-content;
             }
             .title {
-                font-size: 19px;
+                font-size: 15px;
                 font-weight: 700;
-                color: #1a2a44;
+                letter-spacing: 1.5px;
             }
             .exam-name {
-                font-size: 14.5px;
-                color: #555;
-                margin-top: 4px;
+                font-size: 12.5px;
+                color: #d4af37;
+                font-weight: 600;
             }
 
+            /* ===== Body ===== */
             .body {
                 display: flex;
-                gap: 28px;
-                margin-bottom: 26px;
-                align-items: flex-start;
+                gap: 26px;
+                margin-bottom: 22px;
+                align-items: stretch;
             }
             .photo-box {
-                width: 128px;
-                height: 155px;
+                width: 122px;
+                height: 148px;
                 border: 4px solid #1a2a44;
                 border-radius: 6px;
                 overflow: hidden;
@@ -246,96 +288,149 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 flex-shrink: 0;
                 box-shadow: 0 6px 12px rgba(0,0,0,0.2);
             }
-            .photo-box img {
-                width: 100%;
-                height: 100%;
-                object-fit: cover;
-            }
+            .photo-box img { width: 100%; height: 100%; object-fit: cover; }
             .no-photo {
                 height: 100%;
                 display: flex;
                 align-items: center;
                 justify-content: center;
                 color: #aaa;
-                font-size: 14px;
+                font-size: 13px;
             }
 
             .student-info {
                 flex: 1;
-                font-size: 15.5px;
-                line-height: 2.1;
+                border-left: 2px solid #eee2cc;
+                padding-left: 22px;
             }
-            .info-row {
-                margin-bottom: 6px;
+            .info-grid {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                row-gap: 9px;
+                column-gap: 18px;
             }
-            .info-row span {
+            .info-row { display: flex; flex-direction: column; font-size: 13.5px; }
+            .label {
+                font-size: 10px;
+                text-transform: uppercase;
+                letter-spacing: 0.6px;
+                color: #8b6f47;
                 font-weight: 600;
-                color: #1a2a44;
+                margin-bottom: 2px;
             }
+            .value { font-weight: 600; color: #1a2a44; font-size: 14.5px; }
+            .value.roll { color: #a8391e; font-size: 16px; }
 
-            .qr-box {
-                text-align: center;
-                flex-shrink: 0;
-            }
+            .qr-box { text-align: center; flex-shrink: 0; align-self: center; }
             .qr-box img {
-                width: 108px;
-                height: 108px;
+                width: 100px;
+                height: 100px;
                 border: 3px solid #1a2a44;
                 padding: 6px;
                 background: white;
             }
-            .qr-label {
-                margin-top: 8px;
-                font-size: 10px;
-                color: #555;
-                font-weight: 500;
+            .qr-label { margin-top: 7px; font-size: 9.5px; color: #555; font-weight: 500; }
+
+            /* ===== Schedule ===== */
+            .schedule-title {
+                font-size: 13.5px;
+                font-weight: 700;
+                color: #1a2a44;
+                text-transform: uppercase;
+                letter-spacing: 0.6px;
+                margin-bottom: 8px;
+                display: flex;
+                align-items: center;
+                gap: 8px;
+            }
+            .schedule-title::after {
+                content: '';
+                flex: 1;
+                height: 1px;
+                background: #d8c9a3;
             }
 
             table.schedule {
                 width: 100%;
                 border-collapse: collapse;
-                margin: 20px 0 28px;
                 background: white;
-                font-size: 13.8px;
+                font-size: 13.5px;
+                border-radius: 6px;
+                overflow: hidden;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
             }
             table.schedule th {
                 background: #1a2a44;
                 color: white;
-                padding: 10px 12px;
                 text-align: left;
                 font-weight: 600;
+                font-size: 11.5px;
+                text-transform: uppercase;
+                letter-spacing: 0.4px;
             }
-            table.schedule td {
-                padding: 10px 12px;
-                border: 1px solid #ddd;
+            table.schedule td { border-bottom: 1px solid #eee2cc; }
+            table.schedule tr:last-child td { border-bottom: none; }
+            table.schedule tr:nth-child(even) td { background: #faf6ec; }
+            table.schedule .sl { width: 28px; color: #8b6f47; font-weight: 600; text-align: center; }
+            table.schedule .subj { font-weight: 600; color: #1a2a44; }
+            table.schedule .room {
+                font-weight: 700;
+                color: #1a2a44;
+                text-align: center;
             }
-            table.schedule tr:nth-child(even) {
-                background: #f9f6f0;
+            .time-cell { white-space: nowrap; }
+            .time-start, .time-end {
+                font-weight: 600;
+                color: #1a2a44;
+                background: #eef1f6;
+                padding: 2px 7px;
+                border-radius: 4px;
+                font-size: 12px;
             }
+            .time-arrow { margin: 0 6px; color: #8b6f47; font-weight: 700; }
+
+            /* Density variants control row padding + margins so the card
+               fills the page evenly whether it has 5, 7, or 10 subjects */
+            .admit-card.roomy table.schedule th,
+            .admit-card.roomy table.schedule td { padding: 15px 14px; }
+            .admit-card.roomy .schedule { margin: 22px 0 34px; }
+            .admit-card.roomy .body { margin-bottom: 30px; }
+
+            .admit-card.normal table.schedule th,
+            .admit-card.normal table.schedule td { padding: 11px 12px; }
+            .admit-card.normal .schedule { margin: 18px 0 26px; }
+
+            .admit-card.compact table.schedule th,
+            .admit-card.compact table.schedule td { padding: 7px 10px; font-size: 12.5px; }
+            .admit-card.compact .schedule { margin: 14px 0 18px; }
+            .admit-card.compact .time-start,
+            .admit-card.compact .time-end { padding: 1px 5px; font-size: 11px; }
+            .admit-card.compact .body { margin-bottom: 16px; }
+            .admit-card.compact .header { margin-bottom: 16px; padding-bottom: 12px; }
 
             .no-schedule {
                 text-align: center;
-                font-size: 15px;
+                font-size: 14px;
                 color: #666;
-                padding: 20px;
+                padding: 24px;
                 border: 2px dashed #ccc;
                 border-radius: 6px;
+                margin: 20px 0;
             }
 
+            /* ===== Footer ===== */
             .footer {
                 display: flex;
                 justify-content: space-between;
-                margin-top: 40px;
-                font-size: 14px;
+                margin-top: auto;
+                padding-top: 24px;
+                font-size: 13px;
             }
-            .signature-box {
-                text-align: center;
-                width: 42%;
-            }
+            .signature-box { text-align: center; width: 42%; }
             .signature-line {
                 height: 1px;
                 background: #333;
-                margin-bottom: 8px;
+                margin-bottom: 7px;
                 width: 85%;
                 margin-left: auto;
                 margin-right: auto;
@@ -345,7 +440,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
     <body>${pages.join('')}</body>
     </html>`;
 };
-
 const generatePdfBuffer = async (html: string): Promise<Buffer> => {
     const browser = await getBrowser();
     const page = await browser.newPage();
@@ -362,7 +456,7 @@ const generatePdfBuffer = async (html: string): Promise<Buffer> => {
 const uploadAdmitCardToCloudinary = async (pdfBuffer: Buffer, examName: string, studentName?: string): Promise<string> => {
     const cleanExam = examName.replace(/[^a-zA-Z0-9]/g, '-');
     const cleanStudent = studentName ? studentName.replace(/[^a-zA-Z0-9]/g, '-') : 'batch';
-    
+
     const uploadedFile = {
         buffer: pdfBuffer,
         mimetype: 'application/pdf',
@@ -406,12 +500,12 @@ const generateAdmitCardsForEnrollments = async (
     }
 
     if (enrollments.length === 0) {
-        return { 
-            pdfBuffer: null, 
-            cloudinaryUrl: undefined, 
-            totalStudents: enrollmentIds.length, 
-            successCount: 0, 
-            failed 
+        return {
+            pdfBuffer: null,
+            cloudinaryUrl: undefined,
+            totalStudents: enrollmentIds.length,
+            successCount: 0,
+            failed
         };
     }
 
@@ -444,6 +538,8 @@ const generateAdmitCardsForEnrollments = async (
             studentEnrollmentId: enrollment.id,
             admissionNumber: enrollment.student.admissionNumber,
             fullName: enrollment.student.fullName,
+            fatherName: enrollment.student.fatherName,
+            motherName: enrollment.student.motherName,
             rollNumber: enrollment.rollNumber,
             photo: enrollment.student.photo,
             className: enrollment.class.name,
@@ -454,12 +550,12 @@ const generateAdmitCardsForEnrollments = async (
     });
 
     if (cards.length === 0) {
-        return { 
-            pdfBuffer: null, 
-            cloudinaryUrl: undefined, 
-            totalStudents: enrollmentIds.length, 
-            successCount: 0, 
-            failed 
+        return {
+            pdfBuffer: null,
+            cloudinaryUrl: undefined,
+            totalStudents: enrollmentIds.length,
+            successCount: 0,
+            failed
         };
     }
 
@@ -502,7 +598,7 @@ const generateSingleAdmitCard = async (
     examId: number
 ): Promise<{ pdfBuffer: Buffer; cloudinaryUrl: string }> => {
     const result = await generateAdmitCardsForEnrollments([studentEnrollmentId], examId);
-    
+
     if (!result.pdfBuffer) {
         const reason = result.failed[0]?.reason ?? 'Unknown error';
         throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to generate admit card: ${reason}`);

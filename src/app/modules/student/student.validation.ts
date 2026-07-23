@@ -24,6 +24,9 @@ const phoneSchema = z
 
 const addressSchema = z.string().trim().min(1).max(255).optional();
 
+// ✅ NEW: father/mother name — optional, trimmed
+const parentNameSchema = z.string().trim().min(1).max(100).optional();
+
 // ── Create User + Student (Fixed for Auto-Increment) ───────────────────────
 export const createUserWithStudentZodSchema = z.object({
     user: z.object({
@@ -31,13 +34,14 @@ export const createUserWithStudentZodSchema = z.object({
         password: z.string().min(6, "Password must be at least 6 characters"),
     }),
     student: z.object({
-        // ✅ FIXED: Using preprocess so validation passes when field is missing/empty
         admissionNumber: z.preprocess(
             (val) => (val == null || val === "" ? undefined : String(val).trim()),
             z.string().trim().min(1, "Admission number is required").optional()
         ),
 
         fullName: z.string().trim().min(2, "Full name must be at least 2 characters"),
+        fatherName: parentNameSchema,   // ✅ NEW
+        motherName: parentNameSchema,   // ✅ NEW
         gender: z.enum(["MALE", "FEMALE", "OTHER"]),
         dateOfBirth: dateOfBirthSchema,
         phone: phoneSchema,
@@ -51,6 +55,8 @@ export const createStudentZodSchema = z.object({
     userId: z.coerce.number().int().positive().optional(),
     admissionNumber: z.string().trim().min(1, "Admission number is required"),
     fullName: z.string().trim().min(2, "Full name must be at least 2 characters"),
+    fatherName: parentNameSchema,   // ✅ NEW
+    motherName: parentNameSchema,   // ✅ NEW
     gender: z.enum(["MALE", "FEMALE", "OTHER"]),
     dateOfBirth: dateOfBirthSchema,
     phone: phoneSchema,
@@ -61,6 +67,8 @@ export const createStudentZodSchema = z.object({
 // ── Update Student ─────────────────────────────────────────────────────────
 export const updateStudentZodSchema = z.object({
     fullName: z.string().trim().min(2).optional(),
+    fatherName: parentNameSchema,   // ✅ NEW
+    motherName: parentNameSchema,   // ✅ NEW
     gender: z.enum(["MALE", "FEMALE", "OTHER"]).optional(),
     dateOfBirth: dateOfBirthSchema.optional(),
     phone: phoneSchema,

@@ -61,28 +61,25 @@ const uploadStudentPhoto = async (file: UploadedFile): Promise<string> => {
     }
 };
 
+// ── FIXED: Numeric-safe next admission number generator ────────────────────
 const getNextAdmissionNumber = async (tx?: any): Promise<string> => {
     const prismaClient = tx || prisma;
 
-    const lastStudent = await prismaClient.student.findFirst({
-        orderBy: {
-            admissionNumber: 'desc'
-        },
-        select: {
-            admissionNumber: true
-        },
+    // Fetch all admission numbers and compute max numerically in JS.
+    // Avoids string-sort bugs from mixed padding/lengths.
+    const students = await prismaClient.student.findMany({
+        select: { admissionNumber: true },
     });
 
-    let nextNum = 1;
-    if (lastStudent?.admissionNumber) {
-        const lastNum = parseInt(lastStudent.admissionNumber, 10);
-        if (!isNaN(lastNum)) {
-            nextNum = lastNum + 1;
+    let maxNum = 0;
+    for (const s of students) {
+        const num = parseInt(s.admissionNumber, 10);
+        if (!isNaN(num) && num > maxNum) {
+            maxNum = num;
         }
     }
 
-    // You can change padding as needed (e.g., 4 digits, 6 digits, etc.)
-    return nextNum.toString().padStart(4, '0');
+    return (maxNum + 1).toString().padStart(4, '0');
 };
 
 // ── Utility: extract Cloudinary public_id from a secure_url ────────────────
@@ -118,6 +115,8 @@ const createStudent = async (
             data: {
                 admissionNumber: payload.admissionNumber,
                 fullName: payload.fullName,
+                fatherName: payload.fatherName,   // ✅ NEW
+                motherName: payload.motherName,   // ✅ NEW
                 gender: payload.gender,
                 dateOfBirth: new Date(payload.dateOfBirth),
                 phone: payload.phone,
@@ -142,33 +141,30 @@ const createStudent = async (
     }
 };
 
-// ── Create User + Student together ──────────────────────────────────────────
+
+
 const createUserWithStudent = async (
     payload: CreateUserWithStudentInput,
     file?: UploadedFile
 ): Promise<Student> => {
     const { user: userPayload, student: studentPayload } = payload;
 
-    // Auto generate admission number if not provided
-    let admissionNumber = studentPayload.admissionNumber?.trim();
-    if (!admissionNumber) {
-        admissionNumber = await getNextAdmissionNumber();
-    }
-
-    // Pre-checks BEFORE any upload/DB write
-    const [emailExists, admissionExists] = await Promise.all([
-        prisma.user.findUnique({ where: { email: userPayload.email } }),
-        prisma.student.findUnique({ where: { admissionNumber } }),
-    ]);
-
+    const emailExists = await prisma.user.findUnique({ where: { email: userPayload.email } });
     if (emailExists) {
         throw new ApiError(httpStatus.CONFLICT, "Email is already in use");
     }
-    if (admissionExists) {
-        throw new ApiError(httpStatus.CONFLICT, "Admission number already exists");
+
+    // If user manually provided an admission number, validate it upfront
+    const manualAdmissionNumber = studentPayload.admissionNumber?.trim();
+    if (manualAdmissionNumber) {
+        const admissionExists = await prisma.student.findUnique({
+            where: { admissionNumber: manualAdmissionNumber },
+        });
+        if (admissionExists) {
+            throw new ApiError(httpStatus.CONFLICT, "Admission number already exists");
+        }
     }
 
-    // Upload photo (outside transaction)
     let photoUrl: string | undefined;
     if (file) {
         photoUrl = await uploadStudentPhoto(file);
@@ -176,47 +172,72 @@ const createUserWithStudent = async (
 
     const hashedPassword = await bcrypt.hash(userPayload.password, BCRYPT_SALT_ROUNDS);
 
-    try {
-        const result = await prisma.$transaction(async (tx) => {
-            const createdUser = await tx.user.create({
-                data: {
-                    email: userPayload.email,
-                    password: hashedPassword,
-                    role: "STUDENT",
-                },
-            });
+    const MAX_RETRIES = 3;
+    let lastError: any;
 
-            const createdStudent = await tx.student.create({
-                data: {
-                    admissionNumber,                    // ← Auto-generated
-                    fullName: studentPayload.fullName,
-                    gender: studentPayload.gender,
-                    dateOfBirth: new Date(studentPayload.dateOfBirth),
-                    phone: studentPayload.phone,
-                    address: studentPayload.address,
-                    photo: photoUrl,
-                    isActive: studentPayload.isActive ?? true,
-                    userId: createdUser.id,
-                },
-                include: {
-                    user: true,
-                    enrollments: {
-                        include: { academicYear: true, class: true, section: true },
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+        try {
+            const result = await prisma.$transaction(async (tx) => {
+                // ✅ Generate INSIDE transaction, right before create — minimizes race window
+                const admissionNumber = manualAdmissionNumber || await getNextAdmissionNumber(tx);
+
+                const createdUser = await tx.user.create({
+                    data: {
+                        email: userPayload.email,
+                        password: hashedPassword,
+                        role: "STUDENT",
                     },
-                },
-            });
-            return createdStudent;
-        });
+                });
 
-        return result;
-    } catch (error) {
-        if (photoUrl) {
-            const publicId = extractPublicId(photoUrl);
-            if (publicId) await fileUploader.deleteFromCloudinary(publicId).catch(() => { });
+                const createdStudent = await tx.student.create({
+                    data: {
+                        admissionNumber,
+                        fullName: studentPayload.fullName,
+                        fatherName: studentPayload.fatherName,
+                        motherName: studentPayload.motherName,
+                        gender: studentPayload.gender,
+                        dateOfBirth: new Date(studentPayload.dateOfBirth),
+                        phone: studentPayload.phone,
+                        address: studentPayload.address,
+                        photo: photoUrl,
+                        isActive: studentPayload.isActive ?? true,
+                        userId: createdUser.id,
+                    },
+                    include: {
+                        user: true,
+                        enrollments: {
+                            include: { academicYear: true, class: true, section: true },
+                        },
+                    },
+                });
+                return createdStudent;
+            });
+
+            return result;
+        } catch (error: any) {
+            lastError = error;
+            // Prisma unique constraint violation code
+            const isUniqueConflict = error?.code === "P2002";
+            if (isUniqueConflict && !manualAdmissionNumber && attempt < MAX_RETRIES - 1) {
+                continue; // retry with a freshly generated number
+            }
+            break;
         }
-        throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, "Failed to create user and student record");
     }
+
+    if (photoUrl) {
+        const publicId = extractPublicId(photoUrl);
+        if (publicId) await fileUploader.deleteFromCloudinary(publicId).catch(() => { });
+    }
+
+    if (lastError?.code === "P2002") {
+        throw new ApiError(httpStatus.CONFLICT, "Admission number already exists");
+    }
+    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, "Failed to create user and student record");
 };
+
+
+
 
 const updateStudent = async (
     id: number,
@@ -237,6 +258,8 @@ const updateStudent = async (
         where: { id },
         data: {
             ...(payload.fullName && { fullName: payload.fullName }),
+            ...(payload.fatherName !== undefined && { fatherName: payload.fatherName }),   // ✅ NEW
+            ...(payload.motherName !== undefined && { motherName: payload.motherName }),   // ✅ NEW
             ...(payload.gender && { gender: payload.gender }),
             ...(payload.dateOfBirth && { dateOfBirth: new Date(payload.dateOfBirth) }),
             ...(payload.phone !== undefined && { phone: payload.phone }),
