@@ -103,7 +103,7 @@ const buildApp = async () => {
   });
 
   app.addHook("onClose", (_instance, done) => {
-    app.log.info("🛑 Server is shutting down  start again...");
+    app.log.info("🛑 Server is shutting down  ...");
     done();
   });
 
