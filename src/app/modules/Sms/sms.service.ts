@@ -8,7 +8,7 @@ import { buildPaginationMeta, calculatePagination, type PaginationQuery } from '
 import type { Prisma } from '@prisma/client';
 import { smsLogSearchableFields } from './sms.constant.js';
 
-const APP_URL = process.env.APP_URL!;
+const APP_URL = process.env.FRONTEND_URL!;
 
 const buildResultSmsText = (params: {
     studentName: string;
