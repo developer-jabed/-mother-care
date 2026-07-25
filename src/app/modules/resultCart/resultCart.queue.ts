@@ -2,7 +2,6 @@ import { Queue } from 'bullmq';
 import { Redis as IORedis } from 'ioredis';
 import type { IResultCardJobData } from './resultCart.interface.js';
 
-
 const redisUrl = process.env.BULLMQ_REDIS_URL;
 
 let resultCardQueue: Queue<IResultCardJobData> | null = null;
@@ -38,7 +37,6 @@ if (redisUrl) {
     console.warn('⚠️ BULLMQ_REDIS_URL not set — result card generation will always run synchronously');
 }
 
-/** Quick check before deciding queue vs. direct-fallback path. */
 export const isQueueAvailable = (): boolean => {
     return resultCardQueue !== null && redisAvailable;
 };
@@ -53,21 +51,32 @@ export const addResultCardJob = async (data: IResultCardJobData): Promise<string
         removeOnComplete: { age: 3600 },
         removeOnFail: { age: 86400 },
     });
-    return job.id!;
+    return String(job.id);
 };
 
+/** Normalized status for the frontend poller */
 export const getResultCardJobStatus = async (jobId: string) => {
     if (!resultCardQueue) return null;
+
     const job = await resultCardQueue.getJob(jobId);
     if (!job) return null;
 
-    const state = await job.getState();
+    const state = await job.getState(); // waiting | active | completed | failed | delayed | ...
+
     return {
-        jobId: job.id,
-        state,
-        progress: job.progress,
-        result: state === 'completed' ? job.returnvalue : undefined,
-        failedReason: state === 'failed' ? job.failedReason : undefined,
+        jobId: String(job.id),
+        state, // frontend checks this exactly
+        progress: job.progress ?? 0,
+        result:
+            state === 'completed'
+                ? (job.returnvalue as {
+                      fileUrl: string;
+                      totalStudents: number;
+                      successCount: number;
+                      failed: unknown[];
+                  })
+                : undefined,
+        failedReason: state === 'failed' ? job.failedReason ?? 'Job failed' : undefined,
     };
 };
 

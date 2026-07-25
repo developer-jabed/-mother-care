@@ -27,13 +27,12 @@ let browserInstance: Browser | null = null;
 const getBrowser = async (): Promise<Browser> => {
     if (!browserInstance || !browserInstance.connected) {
         if (isLocalDev) {
-            // Local dev machine (Windows/Mac/Linux) — use full puppeteer's own bundled Chrome
             const puppeteer = await import('puppeteer');
             browserInstance = (await puppeteer.default.launch({
                 headless: true,
+                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
             })) as unknown as Browser;
         } else {
-            // Production (Render/OCI Linux) — serverless-friendly Chromium binary
             browserInstance = await puppeteerCore.launch({
                 args: chromium.args,
                 executablePath: await chromium.executablePath(),
@@ -44,10 +43,6 @@ const getBrowser = async (): Promise<Browser> => {
     return browserInstance;
 };
 
-/**
- * Pre-warm the browser at server startup so the first real request
- * doesn't pay the Chromium boot/extraction cost.
- */
 const warmupBrowser = async (): Promise<void> => {
     try {
         await getBrowser();
@@ -57,26 +52,51 @@ const warmupBrowser = async (): Promise<void> => {
     }
 };
 
-// ── Asset caches (logo + Bengali font) ──────────────────────────────
-let logoBase64Cache: string | null = null;
+// ── Logo: load once, resize small (same idea as result cards) ────────
+let logoHeaderCache: string | null = null;
+let logoMarkCache: string | null = null;
+
+const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> => {
+    if (logoHeaderCache && logoMarkCache) {
+        return { header: logoHeaderCache, mark: logoMarkCache };
+    }
+
+    const logoPath = path.join(process.cwd(), 'public', 'assets', 'mothercare-logo.png');
+    const raw = await fs.readFile(logoPath);
+
+    try {
+        const sharp = (await import('sharp')).default;
+
+        const headerBuf = await sharp(raw)
+            .resize(160, 160, { fit: 'inside', withoutEnlargement: true })
+            .png({ quality: 80, compressionLevel: 9 })
+            .toBuffer();
+
+        const markBuf = await sharp(raw)
+            .resize(80, 80, { fit: 'inside', withoutEnlargement: true })
+            .png({ quality: 60, compressionLevel: 9 })
+            .toBuffer();
+
+        logoHeaderCache = `data:image/png;base64,${headerBuf.toString('base64')}`;
+        logoMarkCache = `data:image/png;base64,${markBuf.toString('base64')}`;
+    } catch {
+        console.warn(
+            '[admit-cards] sharp not available — using original logo (pnpm add sharp for speed)'
+        );
+        const b64 = `data:image/png;base64,${raw.toString('base64')}`;
+        logoHeaderCache = b64;
+        logoMarkCache = b64;
+    }
+
+    return { header: logoHeaderCache!, mark: logoMarkCache! };
+};
+
+// ── Bengali font — skip heavy base64 embed in local dev ──────────────
 let bengaliFontBase64Cache: string | null = null;
 
-const loadAssetAsBase64 = async (filePath: string): Promise<string> => {
-    const buffer = await fs.readFile(filePath);
-    const ext = path.extname(filePath).slice(1);
-    return `data:image/${ext};base64,${buffer.toString('base64')}`;
-};
-
-const getBrandAssets = async () => {
-    if (!logoBase64Cache) {
-        logoBase64Cache = await loadAssetAsBase64(
-            path.join(process.cwd(), 'public', 'assets', 'mothercare-logo.png')
-        );
-    }
-    return { logo: logoBase64Cache };
-};
-
 const getBengaliFontBase64 = async (): Promise<string> => {
+    if (isLocalDev) return ''; // system fonts are enough for local speed tests
+
     if (!bengaliFontBase64Cache) {
         const buffer = await fs.readFile(
             path.join(process.cwd(), 'public', 'fonts', 'NotoSansBengali-Regular.ttf')
@@ -86,23 +106,12 @@ const getBengaliFontBase64 = async (): Promise<string> => {
     return bengaliFontBase64Cache;
 };
 
-// ── Student photo handling ──────────────────────────────────────────
-
-/**
- * Rewrite a Cloudinary URL to request a small, pre-cropped, auto-quality
- * thumbnail instead of the original full-resolution upload. Dramatically
- * reduces network transfer + Chromium image-decode time per card.
- */
+// ── Student photo handling ───────────────────────────────────────────
 const toCloudinaryThumbnail = (url: string): string => {
-    if (!url.includes('/upload/')) return url; // not a Cloudinary URL, leave as-is
+    if (!url.includes('/upload/')) return url;
     return url.replace('/upload/', '/upload/w_200,h_240,c_fill,q_auto,f_auto/');
 };
 
-/**
- * Fetch a photo URL and convert it to a base64 data URI, so Chromium never
- * has to make its own network request during page.setContent(). Failures
- * are swallowed — the card just falls back to the "no photo" placeholder.
- */
 const fetchPhotoAsBase64 = async (url: string): Promise<string | null> => {
     try {
         const response = await fetch(url);
@@ -117,10 +126,6 @@ const fetchPhotoAsBase64 = async (url: string): Promise<string | null> => {
     }
 };
 
-/**
- * Pre-fetch every student photo in the batch concurrently, once, before any
- * Chromium rendering starts. Returns a map of enrollmentId -> base64 data URI.
- */
 const preloadPhotos = async (
     enrollments: { id: number; photo: string | null }[]
 ): Promise<Map<number, string | null>> => {
@@ -142,13 +147,28 @@ const preloadPhotos = async (
 };
 
 const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => {
-    const { logo } = await getBrandAssets();
+    const { header: logo, mark: logoMark } = await loadAndResizeLogo();
     const bengaliFont = await getBengaliFontBase64();
+
+    const fontFaceCss = bengaliFont
+        ? `
+            @font-face {
+                font-family: 'Noto Sans Bengali';
+                src: url(data:font/ttf;base64,${bengaliFont}) format('truetype');
+                font-weight: normal;
+                font-style: normal;
+            }
+        `
+        : '';
 
     const pages = await Promise.all(
         cards.map(async (card) => {
             const qrPayload = `${process.env.FRONTEND_URL}/admit-cards/verify/${card.student.studentEnrollmentId}/${card.exam.examId}`;
-            const qrDataUrl = await QRCode.toDataURL(qrPayload, { width: 100, margin: 0 });
+            const qrDataUrl = await QRCode.toDataURL(qrPayload, {
+                width: 100,
+                margin: 0,
+                errorCorrectionLevel: 'M',
+            });
 
             const rowCount = card.schedule.length;
             const densityClass =
@@ -169,10 +189,10 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                         <td class="sl">${idx + 1}</td>
                         <td class="subj">${row.subjectName}</td>
                         <td>${new Date(row.examDate).toLocaleDateString('en-US', {
-                        day: '2-digit',
-                        month: 'short',
-                        year: 'numeric',
-                    })}</td>
+                            day: '2-digit',
+                            month: 'short',
+                            year: 'numeric',
+                        })}</td>
                         <td class="time-cell">
                             <span class="time-start">${start}</span>
                             <span class="time-arrow">&rarr;</span>
@@ -185,9 +205,8 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
 
             return `
             <div class="admit-card ${densityClass}">
-                <div class="bg-texture"></div>
                 <div class="watermark">
-                    <img src="${logo}" alt="Watermark" />
+                    <img src="${logoMark}" alt="" />
                 </div>
 
                 <div class="header">
@@ -204,9 +223,11 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
 
                 <div class="body">
                     <div class="photo-box">
-                        ${card.student.photo
-                    ? `<img src="${card.student.photo}" alt="Student Photo" />`
-                    : `<div class="no-photo">Photo</div>`}
+                        ${
+                            card.student.photo
+                                ? `<img src="${card.student.photo}" alt="Student Photo" />`
+                                : `<div class="no-photo">Photo</div>`
+                        }
                     </div>
 
                     <div class="student-info">
@@ -226,8 +247,9 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                     </div>
                 </div>
 
-                ${rowCount > 0
-                    ? `
+                ${
+                    rowCount > 0
+                        ? `
                     <div class="schedule-title">Exam Schedule</div>
                     <table class="schedule">
                         <thead>
@@ -241,7 +263,7 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                         </thead>
                         <tbody>${scheduleRows}</tbody>
                     </table>`
-                    : `<p class="no-schedule">Exam schedule will be announced later.</p>`
+                        : `<p class="no-schedule">Exam schedule will be announced later.</p>`
                 }
 
                 <div class="footer">
@@ -263,47 +285,32 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
     <head>
         <meta charset="utf-8" />
         <style>
-            @font-face {
-                font-family: 'Noto Sans Bengali';
-                src: url(data:font/ttf;base64,${bengaliFont}) format('truetype');
-                font-weight: normal;
-                font-style: normal;
-            }
+            ${fontFaceCss}
 
             @page { size: A4; margin: 8mm; }
             * { box-sizing: border-box; }
             body {
-                font-family: 'Noto Sans Bengali', 'Noto Sans', 'Segoe UI', sans-serif;
+                font-family: 'Noto Sans Bengali', 'Segoe UI', system-ui, sans-serif;
                 margin: 0;
                 background: #f8f5f0;
+                -webkit-print-color-adjust: exact;
+                print-color-adjust: exact;
             }
 
             .admit-card {
                 position: relative;
                 page-break-after: always;
+                page-break-inside: avoid;
                 border: 3px solid #1a2a44;
                 border-radius: 10px;
-                padding: 30px 34px;
+                padding: 28px 32px;
                 background: #fdfaf3;
-                min-height: 100%;
+                /* content-driven height — no forced full-page blank space */
                 display: flex;
                 flex-direction: column;
-                box-shadow: 0 0 25px rgba(0,0,0,0.15);
                 overflow: hidden;
             }
             .admit-card:last-child { page-break-after: auto; }
-
-            .bg-texture {
-                position: absolute;
-                inset: 0;
-                z-index: 0;
-                opacity: 0.75;
-                background-image:
-                    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='200' height='200' viewBox='0 0 200 200'%3E%3Cfilter id='n' x='0' y='0'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.45 0 0 0 0 0.38 0 0 0 0 0.28 0 0 0 0.08 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E"),
-                    linear-gradient(rgba(245, 240, 230, 0.6), rgba(245, 240, 230, 0.6));
-                background-repeat: repeat;
-                pointer-events: none;
-            }
 
             .watermark {
                 position: absolute;
@@ -312,10 +319,10 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 align-items: center;
                 justify-content: center;
                 z-index: 1;
-                opacity: 0.06;
+                opacity: 0.05;
                 pointer-events: none;
             }
-            .watermark img { width: 50%; filter: grayscale(1); }
+            .watermark img { width: 42%; filter: grayscale(1); }
 
             .header, .body, .schedule-title, .schedule, .footer, .no-schedule {
                 position: relative;
@@ -325,33 +332,33 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
             .header {
                 display: flex;
                 align-items: center;
-                gap: 20px;
+                gap: 18px;
                 border-bottom: 3px double #8b6f47;
-                padding-bottom: 16px;
-                margin-bottom: 22px;
+                padding-bottom: 14px;
+                margin-bottom: 18px;
             }
             .logo {
-                width: 76px;
-                height: 76px;
+                width: 68px;
+                height: 68px;
                 object-fit: contain;
                 border: 3px solid #8b6f47;
                 border-radius: 50%;
-                padding: 4px;
+                padding: 3px;
                 background: white;
                 flex-shrink: 0;
             }
             .header-text { flex: 1; }
             .school-name {
-                font-size: 25px;
+                font-size: 22px;
                 font-weight: 800;
                 color: #1a2a44;
-                letter-spacing: 0.4px;
+                letter-spacing: 0.3px;
             }
             .motto {
-                font-size: 12.5px;
+                font-size: 11.5px;
                 color: #8b6f47;
                 font-style: italic;
-                margin: 3px 0 8px;
+                margin: 2px 0 7px;
             }
             .title-row {
                 display: flex;
@@ -359,36 +366,35 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 gap: 10px;
                 background: #1a2a44;
                 color: #fff;
-                padding: 5px 12px;
+                padding: 4px 11px;
                 border-radius: 4px;
                 width: fit-content;
             }
             .title {
-                font-size: 15px;
+                font-size: 14px;
                 font-weight: 700;
-                letter-spacing: 1.5px;
+                letter-spacing: 1.4px;
             }
             .exam-name {
-                font-size: 12.5px;
+                font-size: 12px;
                 color: #d4af37;
                 font-weight: 600;
             }
 
             .body {
                 display: flex;
-                gap: 26px;
-                margin-bottom: 22px;
+                gap: 22px;
+                margin-bottom: 16px;
                 align-items: stretch;
             }
             .photo-box {
-                width: 122px;
-                height: 148px;
-                border: 4px solid #1a2a44;
+                width: 110px;
+                height: 134px;
+                border: 3px solid #1a2a44;
                 border-radius: 6px;
                 overflow: hidden;
                 background: #fff;
                 flex-shrink: 0;
-                box-shadow: 0 6px 12px rgba(0,0,0,0.2);
             }
             .photo-box img { width: 100%; height: 100%; object-fit: cover; }
             .no-photo {
@@ -397,49 +403,49 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 align-items: center;
                 justify-content: center;
                 color: #aaa;
-                font-size: 13px;
+                font-size: 12px;
             }
 
             .student-info {
                 flex: 1;
                 border-left: 2px solid #eee2cc;
-                padding-left: 22px;
+                padding-left: 18px;
             }
             .info-grid {
                 display: grid;
                 grid-template-columns: 1fr 1fr;
-                row-gap: 9px;
-                column-gap: 18px;
+                row-gap: 7px;
+                column-gap: 14px;
             }
-            .info-row { display: flex; flex-direction: column; font-size: 13.5px; }
+            .info-row { display: flex; flex-direction: column; font-size: 13px; }
             .label {
-                font-size: 10px;
+                font-size: 9.5px;
                 text-transform: uppercase;
-                letter-spacing: 0.6px;
+                letter-spacing: 0.5px;
                 color: #8b6f47;
                 font-weight: 600;
-                margin-bottom: 2px;
+                margin-bottom: 1px;
             }
-            .value { font-weight: 600; color: #1a2a44; font-size: 14.5px; }
-            .value.roll { color: #a8391e; font-size: 16px; }
+            .value { font-weight: 600; color: #1a2a44; font-size: 13.5px; }
+            .value.roll { color: #a8391e; font-size: 15px; }
 
             .qr-box { text-align: center; flex-shrink: 0; align-self: center; }
             .qr-box img {
-                width: 100px;
-                height: 100px;
-                border: 3px solid #1a2a44;
-                padding: 6px;
+                width: 90px;
+                height: 90px;
+                border: 2px solid #1a2a44;
+                padding: 5px;
                 background: white;
             }
-            .qr-label { margin-top: 7px; font-size: 9.5px; color: #555; font-weight: 500; }
+            .qr-label { margin-top: 5px; font-size: 9px; color: #555; font-weight: 500; }
 
             .schedule-title {
-                font-size: 13.5px;
+                font-size: 12.5px;
                 font-weight: 700;
                 color: #1a2a44;
                 text-transform: uppercase;
-                letter-spacing: 0.6px;
-                margin-bottom: 8px;
+                letter-spacing: 0.5px;
+                margin-bottom: 6px;
                 display: flex;
                 align-items: center;
                 gap: 8px;
@@ -455,80 +461,76 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 width: 100%;
                 border-collapse: collapse;
                 background: white;
-                font-size: 13.5px;
-                border-radius: 6px;
+                font-size: 12.5px;
+                border-radius: 5px;
                 overflow: hidden;
-                box-shadow: 0 2px 8px rgba(0,0,0,0.06);
             }
             table.schedule th {
                 background: #1a2a44;
                 color: white;
                 text-align: left;
                 font-weight: 600;
-                font-size: 11.5px;
+                font-size: 10.5px;
                 text-transform: uppercase;
-                letter-spacing: 0.4px;
+                letter-spacing: 0.3px;
             }
             table.schedule td { border-bottom: 1px solid #eee2cc; }
             table.schedule tr:last-child td { border-bottom: none; }
             table.schedule tr:nth-child(even) td { background: #faf6ec; }
-            table.schedule .sl { width: 28px; color: #8b6f47; font-weight: 600; text-align: center; }
+            table.schedule .sl { width: 26px; color: #8b6f47; font-weight: 600; text-align: center; }
             table.schedule .subj { font-weight: 600; color: #1a2a44; }
-            table.schedule .room {
-                font-weight: 700;
-                color: #1a2a44;
-                text-align: center;
-            }
+            table.schedule .room { font-weight: 700; color: #1a2a44; text-align: center; }
             .time-cell { white-space: nowrap; }
             .time-start, .time-end {
                 font-weight: 600;
                 color: #1a2a44;
                 background: #eef1f6;
-                padding: 2px 7px;
+                padding: 2px 6px;
                 border-radius: 4px;
-                font-size: 12px;
+                font-size: 11px;
             }
-            .time-arrow { margin: 0 6px; color: #8b6f47; font-weight: 700; }
+            .time-arrow { margin: 0 5px; color: #8b6f47; font-weight: 700; }
 
             .admit-card.roomy table.schedule th,
-            .admit-card.roomy table.schedule td { padding: 15px 14px; }
-            .admit-card.roomy .schedule { margin: 22px 0 34px; }
-            .admit-card.roomy .body { margin-bottom: 30px; }
+            .admit-card.roomy table.schedule td { padding: 12px 12px; }
+            .admit-card.roomy .schedule { margin: 14px 0 18px; }
+            .admit-card.roomy .body { margin-bottom: 18px; }
 
             .admit-card.normal table.schedule th,
-            .admit-card.normal table.schedule td { padding: 11px 12px; }
-            .admit-card.normal .schedule { margin: 18px 0 26px; }
+            .admit-card.normal table.schedule td { padding: 9px 10px; }
+            .admit-card.normal .schedule { margin: 12px 0 14px; }
 
             .admit-card.compact table.schedule th,
-            .admit-card.compact table.schedule td { padding: 7px 10px; font-size: 12.5px; }
-            .admit-card.compact .schedule { margin: 14px 0 18px; }
+            .admit-card.compact table.schedule td { padding: 6px 8px; font-size: 11.5px; }
+            .admit-card.compact .schedule { margin: 10px 0 12px; }
             .admit-card.compact .time-start,
-            .admit-card.compact .time-end { padding: 1px 5px; font-size: 11px; }
-            .admit-card.compact .body { margin-bottom: 16px; }
-            .admit-card.compact .header { margin-bottom: 16px; padding-bottom: 12px; }
+            .admit-card.compact .time-end { padding: 1px 4px; font-size: 10.5px; }
+            .admit-card.compact .body { margin-bottom: 12px; }
+            .admit-card.compact .header { margin-bottom: 12px; padding-bottom: 10px; }
 
             .no-schedule {
                 text-align: center;
-                font-size: 14px;
+                font-size: 13px;
                 color: #666;
-                padding: 24px;
+                padding: 16px;
                 border: 2px dashed #ccc;
                 border-radius: 6px;
-                margin: 20px 0;
+                margin: 12px 0;
             }
 
             .footer {
                 display: flex;
                 justify-content: space-between;
-                margin-top: auto;
-                padding-top: 24px;
-                font-size: 13px;
+                margin-top: 8px;
+                padding-top: 14px;
+                font-size: 12px;
+                border-top: 1px dashed #d8c9a3;
             }
             .signature-box { text-align: center; width: 42%; }
             .signature-line {
                 height: 1px;
                 background: #333;
-                margin-bottom: 7px;
+                margin-bottom: 6px;
                 width: 85%;
                 margin-left: auto;
                 margin-right: auto;
@@ -540,58 +542,70 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
 };
 
 const generatePdfBuffer = async (html: string): Promise<Buffer> => {
+    const t0 = Date.now();
     const browser = await getBrowser();
+    console.log(`[admit-pdf] browser ready in ${Date.now() - t0}ms`);
+
     const page = await browser.newPage();
     try {
-        // domcontentloaded is sufficient now since photos/logo/font/QR are all
-        // base64-embedded — no external network fetches happen during render.
-        await page.setContent(html, { waitUntil: 'domcontentloaded' });
-        const pdfBuffer = await page.pdf({ format: 'a4', printBackground: true });
+        const t1 = Date.now();
+        await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+        console.log(
+            `[admit-pdf] setContent ${Date.now() - t1}ms (html ~${(html.length / 1024).toFixed(0)} KB)`
+        );
+
+        const t2 = Date.now();
+        const pdfBuffer = await page.pdf({
+            format: 'a4',
+            printBackground: true,
+            preferCSSPageSize: true,
+            margin: { top: '6mm', right: '6mm', bottom: '6mm', left: '6mm' },
+        });
+        console.log(
+            `[admit-pdf] page.pdf ${Date.now() - t2}ms → ${(pdfBuffer.byteLength / 1024).toFixed(0)} KB`
+        );
+
         return Buffer.from(pdfBuffer);
     } finally {
         await page.close();
     }
 };
 
-/**
- * Merge multiple single-batch PDF buffers into one final PDF document.
- */
 const mergePdfBuffers = async (buffers: Buffer[]): Promise<Buffer> => {
     const mergedPdf = await PDFDocument.create();
-
     for (const buffer of buffers) {
         const doc = await PDFDocument.load(buffer);
         const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
         copiedPages.forEach((p) => mergedPdf.addPage(p));
     }
-
-    const mergedBytes = await mergedPdf.save();
-    return Buffer.from(mergedBytes);
+    return Buffer.from(await mergedPdf.save());
 };
 
-// Cloudinary Upload Helper
-const uploadAdmitCardToCloudinary = async (pdfBuffer: Buffer, examName: string, studentName?: string): Promise<string> => {
+const uploadAdmitCardToCloudinary = async (
+    pdfBuffer: Buffer,
+    examName: string,
+    studentName?: string
+): Promise<string> => {
     const cleanExam = examName.replace(/[^a-zA-Z0-9]/g, '-');
-    const cleanStudent = studentName ? studentName.replace(/[^a-zA-Z0-9]/g, '-') : 'batch';
+    const cleanStudent = studentName
+        ? studentName.replace(/[^a-zA-Z0-9]/g, '-')
+        : 'batch';
 
     const uploadedFile = {
         buffer: pdfBuffer,
         mimetype: 'application/pdf',
-        filename: `${cleanExam}-${cleanStudent}.pdf`
+        filename: `${cleanExam}-${cleanStudent}.pdf`,
     };
 
     const result = await fileUploader.uploadToCloudinary(uploadedFile, 'admit-cards');
     return result.secure_url;
 };
 
-/**
- * Core generation function — pre-fetches photos, renders in small batches,
- * then merges into one PDF.
- */
 const generateAdmitCardsForEnrollments = async (
     enrollmentIds: number[],
     examId: number
 ): Promise<IAdmitCardGenerationResult> => {
+    const tTotal = Date.now();
     const failed: IFailedAdmitCard[] = [];
 
     const exam = await prisma.exam.findUnique({ where: { id: examId } });
@@ -623,7 +637,7 @@ const generateAdmitCardsForEnrollments = async (
             cloudinaryUrl: undefined,
             totalStudents: enrollmentIds.length,
             successCount: 0,
-            failed
+            failed,
         };
     }
 
@@ -651,9 +665,12 @@ const generateAdmitCardsForEnrollments = async (
         endDate: exam.endDate,
     };
 
-    // ── Pre-fetch every student photo once, concurrently, as small base64 thumbnails ──
+    const tPhoto = Date.now();
     const photoCache = await preloadPhotos(
         enrollments.map((e) => ({ id: e.id, photo: e.student.photo }))
+    );
+    console.log(
+        `[admit-photos] preload ${Date.now() - tPhoto}ms for ${enrollments.length} students`
     );
 
     const cards: IAdmitCardData[] = enrollments.map((enrollment) => {
@@ -664,7 +681,7 @@ const generateAdmitCardsForEnrollments = async (
             fatherName: enrollment.student.fatherName,
             motherName: enrollment.student.motherName,
             rollNumber: enrollment.rollNumber,
-            photo: photoCache.get(enrollment.id) ?? null, // base64 thumbnail, or null for placeholder
+            photo: photoCache.get(enrollment.id) ?? null,
             className: enrollment.class.name,
             sectionName: enrollment.section.name,
         };
@@ -678,33 +695,52 @@ const generateAdmitCardsForEnrollments = async (
             cloudinaryUrl: undefined,
             totalStudents: enrollmentIds.length,
             successCount: 0,
-            failed
+            failed,
         };
     }
 
-    // ── Render in small batches to keep each Chromium pass fast & light on memory ──
     const batches: IAdmitCardData[][] = [];
     for (let i = 0; i < cards.length; i += BATCH_SIZE) {
         batches.push(cards.slice(i, i + BATCH_SIZE));
     }
 
     const batchPdfBuffers: Buffer[] = [];
-    for (const batch of batches) {
+    for (const [i, batch] of batches.entries()) {
+        const tBatch = Date.now();
         const html = await renderAdmitCardHtml(batch);
         const buffer = await generatePdfBuffer(html);
+        console.log(
+            `[admit-batch ${i + 1}/${batches.length}] ${Date.now() - tBatch}ms (${batch.length} cards)`
+        );
         batchPdfBuffers.push(buffer);
     }
 
     const pdfBuffer =
-        batchPdfBuffers.length === 1 ? batchPdfBuffers[0] : await mergePdfBuffers(batchPdfBuffers);
+        batchPdfBuffers.length === 1
+            ? batchPdfBuffers[0]
+            : await mergePdfBuffers(batchPdfBuffers);
 
+    // Skip Cloudinary in local dev — worker / static files are enough for testing
     let cloudinaryUrl: string | undefined = undefined;
-    try {
-        const studentName = cards.length === 1 ? cards[0].student.fullName : undefined;
-        cloudinaryUrl = await uploadAdmitCardToCloudinary(pdfBuffer, exam.name, studentName);
-    } catch (error) {
-        console.error('Cloudinary upload failed:', error);
+    if (!isLocalDev) {
+        try {
+            const studentName =
+                cards.length === 1 ? cards[0].student.fullName : undefined;
+            const tUp = Date.now();
+            cloudinaryUrl = await uploadAdmitCardToCloudinary(
+                pdfBuffer,
+                exam.name,
+                studentName
+            );
+            console.log(`[admit-cloudinary] upload ${Date.now() - tUp}ms`);
+        } catch (error) {
+            console.error('Cloudinary upload failed:', error);
+        }
     }
+
+    console.log(
+        `[admit-cards] DONE ${Date.now() - tTotal}ms — ${cards.length}/${enrollmentIds.length} ok, pdf ${(pdfBuffer.byteLength / 1024).toFixed(0)} KB`
+    );
 
     return {
         pdfBuffer,
@@ -715,7 +751,10 @@ const generateAdmitCardsForEnrollments = async (
     };
 };
 
-const getSectionEnrollmentIds = async (classId: number, sectionId: number): Promise<number[]> => {
+const getSectionEnrollmentIds = async (
+    classId: number,
+    sectionId: number
+): Promise<number[]> => {
     const enrollments = await prisma.studentEnrollment.findMany({
         where: { classId, sectionId },
         orderBy: { rollNumber: 'asc' },
@@ -723,7 +762,10 @@ const getSectionEnrollmentIds = async (classId: number, sectionId: number): Prom
     });
 
     if (enrollments.length === 0) {
-        throw new ApiError(httpStatus.NOT_FOUND, 'No students found in this class and section');
+        throw new ApiError(
+            httpStatus.NOT_FOUND,
+            'No students found in this class and section'
+        );
     }
 
     return enrollments.map((e) => e.id);
@@ -733,11 +775,17 @@ const generateSingleAdmitCard = async (
     studentEnrollmentId: number,
     examId: number
 ): Promise<Buffer> => {
-    const result = await generateAdmitCardsForEnrollments([studentEnrollmentId], examId);
+    const result = await generateAdmitCardsForEnrollments(
+        [studentEnrollmentId],
+        examId
+    );
 
     if (!result.pdfBuffer) {
         const reason = result.failed[0]?.reason ?? 'Unknown error';
-        throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to generate admit card: ${reason}`);
+        throw new ApiError(
+            httpStatus.INTERNAL_SERVER_ERROR,
+            `Failed to generate admit card: ${reason}`
+        );
     }
 
     return result.pdfBuffer;
