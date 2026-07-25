@@ -14,11 +14,13 @@ import globalErrorHandler from "./app/middlewares/globalErrorHandler.js";
 import notFound from "./app/middlewares/notFound.js";
 import registerRoutes from "./app/routes/index.js";
 import './app/modules/admitCard/admitCard.worker.js';
+import './app/modules/resultCart/resultCart.worker.js';
 
 // side-effect import — starts the BullMQ worker listening on 'smsQueue'
 import "./app/modules/Sms/sms.worker.js";
 import { startKeepAliveCron } from "./app/shared/keepAlive.js";
 import { AdmitCardService } from './app/modules/admitCard/admitCard.service.js';
+import { ResultCardService } from "./app/modules/resultCart/resultCart.service.js";
 
 
 const require = createRequire(import.meta.url);
@@ -98,6 +100,7 @@ const buildApp = async () => {
 
   await app.register(queuePlugin);
   AdmitCardService.warmupBrowser();
+  ResultCardService.warmupBrowser();
 
   // ── Lifecycle hooks ────────────────────────────────────────
   app.addHook("onReady", () => {

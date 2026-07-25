@@ -134,6 +134,10 @@ const createResult = async (payload: ICreateResultPayload): Promise<Result> => {
 
     return result;
 };
+
+
+
+
 const getAllResults = async (
     filters: IResultFilterRequest,
     paginationOptions: PaginationResult
