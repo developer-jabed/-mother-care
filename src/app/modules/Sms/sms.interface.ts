@@ -18,3 +18,11 @@ export interface SmsResponse {
     skippedAlreadySent?: number;
     data?: any;
 }
+
+export interface ISmsLogFilters {
+    searchTerm?: string;
+    examId?: number;
+    studentEnrollmentId?: number;
+    status?: 'PENDING' | 'SENT' | 'DELIVERED' | 'FAILED';
+    phone?: string;
+}

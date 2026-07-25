@@ -2,7 +2,11 @@ import httpStatus from 'http-status';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 import type { FastifyInstance } from 'fastify';
-import type { ISmsJobData, ISendResultSmsPayload } from './sms.interface.js';
+import type { ISmsJobData, ISendResultSmsPayload, ISmsLogFilters } from './sms.interface.js';
+import type { IPaginationOptions } from '../../interfaces/pagination.js';
+import { buildPaginationMeta, calculatePagination, type PaginationQuery } from '../../helper/paginationHelper.js';
+import type { Prisma } from '@prisma/client';
+import { smsLogSearchableFields } from './sms.constant.js';
 
 const APP_URL = process.env.APP_URL!;
 
@@ -160,6 +164,67 @@ const queueResultSmsForExam = async (
     };
 };
 
-export const SmsService = {
-    queueResultSmsForExam
+const getSmsLogs = async (
+    filters: ISmsLogFilters,
+    query: PaginationQuery
+) => {
+    const { searchTerm, examId, studentEnrollmentId, status, phone } = filters;
+    const { page, limit, skip, take, sortBy, sortOrder } = calculatePagination(query);
+
+    const andConditions: Prisma.SmsLogWhereInput[] = [];
+
+    if (searchTerm) {
+        andConditions.push({
+            OR: smsLogSearchableFields.map(field => ({
+                [field]: { contains: searchTerm, mode: 'insensitive' },
+            })),
+        });
+    }
+
+    if (examId) {
+        andConditions.push({ examId });
+    }
+
+    if (studentEnrollmentId) {
+        andConditions.push({ studentEnrollmentId });
+    }
+
+    if (status) {
+        andConditions.push({ status });
+    }
+
+    if (phone) {
+        andConditions.push({ phone: { contains: phone, mode: 'insensitive' } });
+    }
+
+    const whereConditions: Prisma.SmsLogWhereInput =
+        andConditions.length > 0 ? { AND: andConditions } : {};
+
+    const result = await prisma.smsLog.findMany({
+        where: whereConditions,
+        skip,
+        take,
+        orderBy: { [sortBy]: sortOrder },
+        include: {
+            exam: { select: { id: true, name: true } },
+            enrollment: {                     
+                include: {
+                    student: { select: { id: true, fullName: true, phone: true } },
+                },
+            },
+        },
+    });
+
+    const total = await prisma.smsLog.count({ where: whereConditions });
+
+    return {
+        meta: buildPaginationMeta(total, { page, limit, skip, take, sortBy, sortOrder }),
+        data: result,
+    };
 };
+
+export const SmsService = {
+    queueResultSmsForExam,
+    getSmsLogs,
+};
+

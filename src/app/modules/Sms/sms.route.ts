@@ -6,4 +6,7 @@ export default async function smsRoutes(fastify: FastifyInstance) {
         '/exams/:examId/send-result-sms',
         SmsController.sendResultSms
     );
+
+
+    fastify.get('/logs', SmsController.getSmsLogs);
 }
