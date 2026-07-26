@@ -77,11 +77,33 @@ const buildResultComputation = async (
         };
     });
 
-    const overallPercentage = (overallObtained / overallFullMarks) * 100;
-    const { grade: overallGrade, gradePoint: overallGradePoint } = resolveGrade(
-        overallPercentage,
-        gradingScales
+    // ── Overall percentage (still useful for ranking & display) ─────
+    const overallPercentage =
+        overallFullMarks > 0
+            ? (overallObtained / overallFullMarks) * 100
+            : 0;
+
+    // ── Overall GPA = average of subject gradePoints ────────────────
+    const totalGradePoints = computedDetails.reduce(
+        (sum, d) => sum + (d.gradePoint || 0),
+        0
     );
+    const subjectCount = computedDetails.length || 1;
+    const overallGradePoint = Number((totalGradePoints / subjectCount).toFixed(2));
+
+    // ── Derive overall letter grade from the average GPA ─────────────
+    // Find the closest matching grade from the grading scale
+    const sortedByGP = [...gradingScales].sort(
+        (a, b) => b.gradePoint - a.gradePoint
+    );
+
+    let overallGrade = 'F';
+    for (const scale of sortedByGP) {
+        if (overallGradePoint >= scale.gradePoint) {
+            overallGrade = scale.grade;
+            break;
+        }
+    }
 
     return {
         computedDetails,

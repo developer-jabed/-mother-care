@@ -174,25 +174,31 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
             const densityClass =
                 rowCount <= 5 ? 'roomy' : rowCount <= 8 ? 'normal' : 'compact';
 
+            // ── FIXED: Force Asia/Dhaka timezone ──────────────────────────────
             const scheduleRows = card.schedule
                 .map((row, idx) => {
-                    const start = new Date(row.startTime).toLocaleTimeString('en-US', {
+                    const timeOptions: Intl.DateTimeFormatOptions = {
                         hour: '2-digit',
                         minute: '2-digit',
-                    });
-                    const end = new Date(row.endTime).toLocaleTimeString('en-US', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                    });
+                        hour12: true,
+                        timeZone: 'Asia/Dhaka',
+                    };
+
+                    const dateOptions: Intl.DateTimeFormatOptions = {
+                        day: '2-digit',
+                        month: 'short',
+                        year: 'numeric',
+                        timeZone: 'Asia/Dhaka',
+                    };
+
+                    const start = new Date(row.startTime).toLocaleTimeString('en-US', timeOptions);
+                    const end = new Date(row.endTime).toLocaleTimeString('en-US', timeOptions);
+
                     return `
                     <tr>
                         <td class="sl">${idx + 1}</td>
                         <td class="subj">${row.subjectName}</td>
-                        <td>${new Date(row.examDate).toLocaleDateString('en-US', {
-                            day: '2-digit',
-                            month: 'short',
-                            year: 'numeric',
-                        })}</td>
+                        <td>${new Date(row.examDate).toLocaleDateString('en-US', dateOptions)}</td>
                         <td class="time-cell">
                             <span class="time-start">${start}</span>
                             <span class="time-arrow">&rarr;</span>
@@ -223,11 +229,10 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
 
                 <div class="body">
                     <div class="photo-box">
-                        ${
-                            card.student.photo
-                                ? `<img src="${card.student.photo}" alt="Student Photo" />`
-                                : `<div class="no-photo">Photo</div>`
-                        }
+                        ${card.student.photo
+                    ? `<img src="${card.student.photo}" alt="Student Photo" />`
+                    : `<div class="no-photo">Photo</div>`
+                }
                     </div>
 
                     <div class="student-info">
@@ -247,9 +252,8 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                     </div>
                 </div>
 
-                ${
-                    rowCount > 0
-                        ? `
+                ${rowCount > 0
+                    ? `
                     <div class="schedule-title">Exam Schedule</div>
                     <table class="schedule">
                         <thead>
@@ -263,7 +267,7 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                         </thead>
                         <tbody>${scheduleRows}</tbody>
                     </table>`
-                        : `<p class="no-schedule">Exam schedule will be announced later.</p>`
+                    : `<p class="no-schedule">Exam schedule will be announced later.</p>`
                 }
 
                 <div class="footer">

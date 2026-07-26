@@ -97,6 +97,16 @@ const gradeBadgeClass = (grade: string): string => {
     return 'badge-blue';
 };
 
+const getOverallGrade = (gpa: number): string => {
+    if (gpa >= 5.0) return 'A+';
+    if (gpa >= 4.0) return 'A';
+    if (gpa >= 3.5) return 'A-';
+    if (gpa >= 3.0) return 'B';
+    if (gpa >= 2.0) return 'C';
+    if (gpa >= 1.0) return 'D';
+    return 'F';
+};
+
 const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> => {
     const { header: logo, mark: logoMark } = await loadAndResizeLogo();
 
@@ -177,8 +187,9 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                         <td class="value">${card.student.className} · ${card.student.sectionName}</td>
                         <td class="label">Date of Birth</td>
                         <td class="value">${new Date(card.student.dateOfBirth).toLocaleDateString('en-GB', {
-                            day: '2-digit', month: '2-digit', year: 'numeric',
-                        })}</td>
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                timeZone: 'Asia/Dhaka',
+            })}</td>
                     </tr>
                     <tr>
                         <td class="label">Result</td>
@@ -520,6 +531,17 @@ const generateResultCardsForEnrollments = async (
             gradePoint: detail.gradePoint,
         }));
 
+        // ── GPA = sum of subject gradePoints ÷ number of subjects ─────
+        const totalGradePoints = subjects.reduce((sum, s) => sum + (s.gradePoint || 0), 0);
+        const subjectCount = subjects.length || 1;
+        const calculatedGPA = totalGradePoints / subjectCount;
+
+        // Optional: recalculate total marks & percentage
+        const totalObtained = subjects.reduce((sum, s) => sum + (s.totalMarks || 0), 0);
+        const totalFullMarks = subjects.reduce((sum, s) => sum + (s.fullMarks || 0), 0);
+        const calculatedPercentage =
+            totalFullMarks > 0 ? (totalObtained / totalFullMarks) * 100 : 0;
+
         const student: IResultCardStudentData = {
             studentEnrollmentId: enrollment.id,
             admissionNumber: enrollment.student.admissionNumber,
@@ -538,10 +560,10 @@ const generateResultCardsForEnrollments = async (
             exam: examData,
             student,
             summary: {
-                totalMarks: result.totalMarks,
-                percentage: result.percentage,
-                grade: result.grade,
-                gradePoint: result.gradePoint,
+                totalMarks: totalObtained,
+                percentage: Number(calculatedPercentage.toFixed(2)),
+                grade: getOverallGrade(calculatedGPA),
+                gradePoint: Number(calculatedGPA.toFixed(2)), // ← average of subject GPs
                 position: result.position,
                 remarks: result.remarks,
             },
