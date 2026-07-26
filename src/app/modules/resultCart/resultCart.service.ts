@@ -90,6 +90,59 @@ const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> =>
     return { header: logoHeaderCache!, mark: logoMarkCache! };
 };
 
+
+
+
+// ── Principal Signature ──────────────────────────────────────────────
+// ── Principal Signature ──────────────────────────────────────────────
+let principalSignatureCache: string | null = null;
+
+const loadPrincipalSignature = async (): Promise<string> => {
+    if (principalSignatureCache !== null) return principalSignatureCache;
+
+    const possiblePaths = [
+        path.join(process.cwd(), 'public', 'assets', 'principal-signature.png'),
+        path.join(process.cwd(), 'public', 'assets', 'principal-signature.jpg'),
+        path.join(process.cwd(), 'public', 'assets', 'signature.png'),
+        path.join(process.cwd(), 'assets', 'principal-signature.png'),
+    ];
+
+    for (const sigPath of possiblePaths) {
+        try {
+            const raw = await fs.readFile(sigPath);
+            console.log(`[result-cards] Principal signature loaded from: ${sigPath}`);
+
+            try {
+                const sharp = (await import('sharp')).default;
+                const resized = await sharp(raw)
+                    .resize(200, 80, { fit: 'inside', withoutEnlargement: true })
+                    .png({ quality: 90 })
+                    .toBuffer();
+
+                principalSignatureCache = `data:image/png;base64,${resized.toString('base64')}`;
+            } catch {
+                // sharp not available → use original
+                const ext = path.extname(sigPath).toLowerCase();
+                const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
+                principalSignatureCache = `data:${mime};base64,${raw.toString('base64')}`;
+            }
+
+            return principalSignatureCache;
+        } catch {
+            // try next path
+        }
+    }
+
+    const principalSig = await loadPrincipalSignature();
+    console.log('Principal signature loaded?', principalSig ? 'YES (' + principalSig.slice(0, 50) + '...)' : 'NO');
+
+    console.warn(
+        '[result-cards] Principal signature NOT FOUND. Tried:\n' +
+        possiblePaths.map(p => '  - ' + p).join('\n')
+    );
+    principalSignatureCache = '';
+    return '';
+};
 // ── HTML ─────────────────────────────────────────────────────────────
 const gradeBadgeClass = (grade: string): string => {
     if (grade.startsWith('A')) return 'badge-green';
@@ -109,6 +162,7 @@ const getOverallGrade = (gpa: number): string => {
 
 const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> => {
     const { header: logo, mark: logoMark } = await loadAndResizeLogo();
+    const principalSig = await loadPrincipalSignature();
 
     const pages = cards
         .map((card) => {
@@ -228,7 +282,10 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                             <div class="sig-title">Controller of Examinations</div>
                         </div>
                         <div class="signature-box">
-                            <div class="signature-line"></div>
+                            ${principalSig
+                    ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
+                    : `<div class="signature-line"></div>`
+                }
                             <div class="sig-title">Principal</div>
                         </div>
                     </div>
@@ -405,6 +462,17 @@ table.subject-table .marks { font-weight: 700; }
     margin: 0 auto 5px; width: 85%; opacity: 0.65;
 }
 .sig-title { font-size: 10px; font-weight: 600; color: #374151; }
+
+/* Principal Signature */
+
+.principal-signature {
+    height: 55px;
+    width: auto;
+    max-width: 180px;
+    object-fit: contain;
+    margin: 0 auto 6px;
+    display: block;
+}
 </style>
 </head>
 <body>${pages}</body>
@@ -536,7 +604,6 @@ const generateResultCardsForEnrollments = async (
         const subjectCount = subjects.length || 1;
         const calculatedGPA = totalGradePoints / subjectCount;
 
-        // Optional: recalculate total marks & percentage
         const totalObtained = subjects.reduce((sum, s) => sum + (s.totalMarks || 0), 0);
         const totalFullMarks = subjects.reduce((sum, s) => sum + (s.fullMarks || 0), 0);
         const calculatedPercentage =
@@ -563,7 +630,7 @@ const generateResultCardsForEnrollments = async (
                 totalMarks: totalObtained,
                 percentage: Number(calculatedPercentage.toFixed(2)),
                 grade: getOverallGrade(calculatedGPA),
-                gradePoint: Number(calculatedGPA.toFixed(2)), // ← average of subject GPs
+                gradePoint: Number(calculatedGPA.toFixed(2)),
                 position: result.position,
                 remarks: result.remarks,
             },

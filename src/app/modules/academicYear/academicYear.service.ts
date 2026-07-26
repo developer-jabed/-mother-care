@@ -1,4 +1,3 @@
-
 import httpStatus from 'http-status';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
@@ -10,6 +9,7 @@ const createAcademicYear = async (payload: {
   endDate: string | Date;
   isCurrent?: boolean;
 }): Promise<AcademicYear> => {
+  // If this new year is marked as current → make all others false first
   if (payload.isCurrent) {
     await prisma.academicYear.updateMany({
       where: { isCurrent: true },
@@ -41,7 +41,8 @@ const updateAcademicYear = async (
     throw new ApiError(httpStatus.NOT_FOUND, 'Academic year not found');
   }
 
-  if (payload.isCurrent) {
+  // If setting this year as current → first unset all others
+  if (payload.isCurrent === true) {
     await prisma.academicYear.updateMany({
       where: { isCurrent: true },
       data: { isCurrent: false },

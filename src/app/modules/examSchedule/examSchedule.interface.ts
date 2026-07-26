@@ -25,4 +25,5 @@ export interface IExamScheduleFilters {
     classId?: number;
     sectionId?: number;
     subjectId?: number;
+    includeExpired?: boolean;
 }

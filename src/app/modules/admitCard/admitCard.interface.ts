@@ -4,6 +4,7 @@ export interface IAdmitCardStudentData {
     fullName: string;
     fatherName: string | null;
     motherName: string | null;
+    signature?: string | null;
     rollNumber: number;
     photo: string | null;
     className: string;

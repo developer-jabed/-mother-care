@@ -8,7 +8,6 @@ import type {
 } from './examSchedule.interface.js';
 
 const create = async (payload: ICreateExamSchedule) => {
-    // exam, subject, class সব আছে কিনা ভ্যালিডেট
     const [exam, subject, cls] = await Promise.all([
         prisma.exam.findUnique({ where: { id: payload.examId } }),
         prisma.subject.findUnique({ where: { id: payload.subjectId } }),
@@ -24,7 +23,7 @@ const create = async (payload: ICreateExamSchedule) => {
         if (!section) throw new ApiError(httpStatus.NOT_FOUND, 'Section not found');
     }
 
-    // duplicate চেক — schema-এর @@unique([examId, subjectId, classId]) অনুযায়ী
+    // duplicate check
     const existing = await prisma.examSchedule.findUnique({
         where: {
             examId_subjectId_classId: {
@@ -58,12 +57,21 @@ const create = async (payload: ICreateExamSchedule) => {
 };
 
 const getMany = async (filters: IExamScheduleFilters) => {
-    const where: Record<string, unknown> = {};
+    const where: any = {};
 
     if (filters.examId) where.examId = filters.examId;
     if (filters.classId) where.classId = filters.classId;
     if (filters.sectionId) where.sectionId = filters.sectionId;
     if (filters.subjectId) where.subjectId = filters.subjectId;
+
+    // ── Hide expired schedules by default ──────────────────────────────
+    // Only show schedules whose endTime is still in the future
+    // If you want to show expired ones, pass filters.includeExpired = true
+    if (!filters.includeExpired) {
+        where.endTime = {
+            gte: new Date(), // endTime >= now → still active
+        };
+    }
 
     return prisma.examSchedule.findMany({
         where,
@@ -91,7 +99,6 @@ const update = async (id: number, payload: IUpdateExamSchedule) => {
         throw new ApiError(httpStatus.NOT_FOUND, 'Exam schedule not found');
     }
 
-    // যদি examId/subjectId/classId বদলানো হয়, নতুন duplicate কম্বিনেশন চেক করা দরকার
     const nextExamId = payload.examId ?? existing.examId;
     const nextSubjectId = payload.subjectId ?? existing.subjectId;
     const nextClassId = payload.classId ?? existing.classId;

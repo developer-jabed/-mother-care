@@ -52,7 +52,7 @@ const warmupBrowser = async (): Promise<void> => {
     }
 };
 
-// ── Logo: load once, resize small (same idea as result cards) ────────
+// ── Logo ─────────────────────────────────────────────────────────────
 let logoHeaderCache: string | null = null;
 let logoMarkCache: string | null = null;
 
@@ -80,9 +80,7 @@ const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> =>
         logoHeaderCache = `data:image/png;base64,${headerBuf.toString('base64')}`;
         logoMarkCache = `data:image/png;base64,${markBuf.toString('base64')}`;
     } catch {
-        console.warn(
-            '[admit-cards] sharp not available — using original logo (pnpm add sharp for speed)'
-        );
+        console.warn('[admit-cards] sharp not available — using original logo');
         const b64 = `data:image/png;base64,${raw.toString('base64')}`;
         logoHeaderCache = b64;
         logoMarkCache = b64;
@@ -91,11 +89,40 @@ const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> =>
     return { header: logoHeaderCache!, mark: logoMarkCache! };
 };
 
-// ── Bengali font — skip heavy base64 embed in local dev ──────────────
+// ── Principal Signature ──────────────────────────────────────────────
+let principalSignatureCache: string | null = null;
+
+const loadPrincipalSignature = async (): Promise<string> => {
+    if (principalSignatureCache) return principalSignatureCache;
+
+    try {
+        const sigPath = path.join(process.cwd(), 'public', 'assets', 'principal-signature.png');
+        const raw = await fs.readFile(sigPath);
+
+        try {
+            const sharp = (await import('sharp')).default;
+            const resized = await sharp(raw)
+                .resize(180, 70, { fit: 'inside', withoutEnlargement: true })
+                .png({ quality: 80 })
+                .toBuffer();
+
+            principalSignatureCache = `data:image/png;base64,${resized.toString('base64')}`;
+        } catch {
+            principalSignatureCache = `data:image/png;base64,${raw.toString('base64')}`;
+        }
+    } catch {
+        console.warn('[admit-cards] Principal signature not found');
+        principalSignatureCache = '';
+    }
+
+    return principalSignatureCache;
+};
+
+// ── Bengali font ─────────────────────────────────────────────────────
 let bengaliFontBase64Cache: string | null = null;
 
 const getBengaliFontBase64 = async (): Promise<string> => {
-    if (isLocalDev) return ''; // system fonts are enough for local speed tests
+    if (isLocalDev) return '';
 
     if (!bengaliFontBase64Cache) {
         const buffer = await fs.readFile(
@@ -106,13 +133,18 @@ const getBengaliFontBase64 = async (): Promise<string> => {
     return bengaliFontBase64Cache;
 };
 
-// ── Student photo handling ───────────────────────────────────────────
+// ── Photo & Signature helpers ────────────────────────────────────────
 const toCloudinaryThumbnail = (url: string): string => {
     if (!url.includes('/upload/')) return url;
     return url.replace('/upload/', '/upload/w_200,h_240,c_fill,q_auto,f_auto/');
 };
 
-const fetchPhotoAsBase64 = async (url: string): Promise<string | null> => {
+const toCloudinarySignature = (url: string): string => {
+    if (!url.includes('/upload/')) return url;
+    return url.replace('/upload/', '/upload/w_200,h_80,c_fit,q_auto,f_auto/');
+};
+
+const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
     try {
         const response = await fetch(url);
         if (!response.ok) return null;
@@ -121,33 +153,48 @@ const fetchPhotoAsBase64 = async (url: string): Promise<string | null> => {
         const contentType = response.headers.get('content-type') ?? 'image/jpeg';
         return `data:${contentType};base64,${buffer.toString('base64')}`;
     } catch (error) {
-        console.error('Failed to pre-fetch student photo:', error);
+        console.error('Failed to fetch image:', error);
         return null;
     }
 };
 
-const preloadPhotos = async (
-    enrollments: { id: number; photo: string | null }[]
-): Promise<Map<number, string | null>> => {
+const preloadPhotosAndSignatures = async (
+    enrollments: { id: number; photo: string | null; signature: string | null }[]
+): Promise<{
+    photoCache: Map<number, string | null>;
+    signatureCache: Map<number, string | null>;
+}> => {
     const photoCache = new Map<number, string | null>();
+    const signatureCache = new Map<number, string | null>();
 
     await Promise.all(
         enrollments.map(async (enrollment) => {
-            if (!enrollment.photo) {
+            // Photo
+            if (enrollment.photo) {
+                const thumbnailUrl = toCloudinaryThumbnail(enrollment.photo);
+                const base64 = await fetchImageAsBase64(thumbnailUrl);
+                photoCache.set(enrollment.id, base64);
+            } else {
                 photoCache.set(enrollment.id, null);
-                return;
             }
-            const thumbnailUrl = toCloudinaryThumbnail(enrollment.photo);
-            const base64 = await fetchPhotoAsBase64(thumbnailUrl);
-            photoCache.set(enrollment.id, base64);
+
+            // Signature
+            if (enrollment.signature) {
+                const sigUrl = toCloudinarySignature(enrollment.signature);
+                const base64 = await fetchImageAsBase64(sigUrl);
+                signatureCache.set(enrollment.id, base64);
+            } else {
+                signatureCache.set(enrollment.id, null);
+            }
         })
     );
 
-    return photoCache;
+    return { photoCache, signatureCache };
 };
 
 const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => {
     const { header: logo, mark: logoMark } = await loadAndResizeLogo();
+    const principalSig = await loadPrincipalSignature();
     const bengaliFont = await getBengaliFontBase64();
 
     const fontFaceCss = bengaliFont
@@ -174,7 +221,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
             const densityClass =
                 rowCount <= 5 ? 'roomy' : rowCount <= 8 ? 'normal' : 'compact';
 
-            // ── FIXED: Force Asia/Dhaka timezone ──────────────────────────────
             const scheduleRows = card.schedule
                 .map((row, idx) => {
                     const timeOptions: Intl.DateTimeFormatOptions = {
@@ -229,10 +275,11 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
 
                 <div class="body">
                     <div class="photo-box">
-                        ${card.student.photo
-                    ? `<img src="${card.student.photo}" alt="Student Photo" />`
-                    : `<div class="no-photo">Photo</div>`
-                }
+                        ${
+                            card.student.photo
+                                ? `<img src="${card.student.photo}" alt="Student Photo" />`
+                                : `<div class="no-photo">Photo</div>`
+                        }
                     </div>
 
                     <div class="student-info">
@@ -252,8 +299,9 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                     </div>
                 </div>
 
-                ${rowCount > 0
-                    ? `
+                ${
+                    rowCount > 0
+                        ? `
                     <div class="schedule-title">Exam Schedule</div>
                     <table class="schedule">
                         <thead>
@@ -267,16 +315,24 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                         </thead>
                         <tbody>${scheduleRows}</tbody>
                     </table>`
-                    : `<p class="no-schedule">Exam schedule will be announced later.</p>`
+                        : `<p class="no-schedule">Exam schedule will be announced later.</p>`
                 }
 
                 <div class="footer">
                     <div class="signature-box">
-                        <div class="signature-line"></div>
+                        ${
+                            principalSig
+                                ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
+                                : `<div class="signature-line"></div>`
+                        }
                         <div>Principal's Signature</div>
                     </div>
                     <div class="signature-box">
-                        <div class="signature-line"></div>
+                        ${
+                            card.student.signature
+                                ? `<img src="${card.student.signature}" class="student-signature" alt="Student Signature" />`
+                                : `<div class="signature-line"></div>`
+                        }
                         <div>Student's Signature</div>
                     </div>
                 </div>
@@ -309,7 +365,6 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 border-radius: 10px;
                 padding: 28px 32px;
                 background: #fdfaf3;
-                /* content-driven height — no forced full-page blank space */
                 display: flex;
                 flex-direction: column;
                 overflow: hidden;
@@ -539,6 +594,24 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                 margin-left: auto;
                 margin-right: auto;
             }
+
+            .principal-signature {
+                height: 45px;
+                width: auto;
+                max-width: 150px;
+                object-fit: contain;
+                margin: 0 auto 4px;
+                display: block;
+            }
+
+            .student-signature {
+                height: 40px;
+                width: auto;
+                max-width: 140px;
+                object-fit: contain;
+                margin: 0 auto 4px;
+                display: block;
+            }
         </style>
     </head>
     <body>${pages.join('')}</body>
@@ -669,9 +742,14 @@ const generateAdmitCardsForEnrollments = async (
         endDate: exam.endDate,
     };
 
+    // ── Preload photos + signatures ──────────────────────────────────
     const tPhoto = Date.now();
-    const photoCache = await preloadPhotos(
-        enrollments.map((e) => ({ id: e.id, photo: e.student.photo }))
+    const { photoCache, signatureCache } = await preloadPhotosAndSignatures(
+        enrollments.map((e) => ({
+            id: e.id,
+            photo: e.student.photo,
+            signature: (e.student as any).signature ?? null, // support if field exists
+        }))
     );
     console.log(
         `[admit-photos] preload ${Date.now() - tPhoto}ms for ${enrollments.length} students`
@@ -686,6 +764,7 @@ const generateAdmitCardsForEnrollments = async (
             motherName: enrollment.student.motherName,
             rollNumber: enrollment.rollNumber,
             photo: photoCache.get(enrollment.id) ?? null,
+            signature: signatureCache.get(enrollment.id) ?? null, // ← new
             className: enrollment.class.name,
             sectionName: enrollment.section.name,
         };
@@ -724,7 +803,6 @@ const generateAdmitCardsForEnrollments = async (
             ? batchPdfBuffers[0]
             : await mergePdfBuffers(batchPdfBuffers);
 
-    // Skip Cloudinary in local dev — worker / static files are enough for testing
     let cloudinaryUrl: string | undefined = undefined;
     if (!isLocalDev) {
         try {
