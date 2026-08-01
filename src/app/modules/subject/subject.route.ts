@@ -14,6 +14,10 @@ export default async function subjectRoutes(fastify: FastifyInstance) {
 
     fastify.get('/', SubjectController.getAllSubjects);
 
+    // ── New route ───────────────────────────────────────────────
+    fastify.get('/class/:classId', SubjectController.getSubjectsByClassId);
+    // ────────────────────────────────────────────────────────────
+
     fastify.get('/:id', SubjectController.getSingleSubject);
 
     fastify.patch(

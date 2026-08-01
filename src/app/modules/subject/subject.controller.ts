@@ -55,6 +55,19 @@ const getSingleSubject = catchAsync(async (request, reply) => {
     });
 });
 
+const getSubjectsByClassId = catchAsync(async (request, reply) => {
+    const { classId } = request.params as { classId: string };
+
+    const result = await SubjectService.getSubjectsByClassId(Number(classId));
+
+    return sendResponse(reply, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: 'Subjects retrieved successfully for the class',
+        data: result,
+    });
+});
+
 const updateSubject = catchAsync(async (request, reply) => {
     const { id } = request.params as { id: string };
     const result = await SubjectService.updateSubject(
@@ -86,6 +99,7 @@ export const SubjectController = {
     createSubject,
     getAllSubjects,
     getSingleSubject,
+    getSubjectsByClassId,
     updateSubject,
     deleteSubject,
 };

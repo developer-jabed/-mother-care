@@ -114,6 +114,32 @@ const getSingleSubject = async (id: number): Promise<Subject> => {
     return result;
 };
 
+
+const getSubjectsByClassId = async (classId: number) => {
+    // Check if class exists
+    const classExists = await prisma.class.findUnique({
+        where: { id: classId },
+    });
+
+    if (!classExists) {
+        throw new ApiError(httpStatus.NOT_FOUND, 'Class not found');
+    }
+
+    // Get distinct subjects linked to this class via ClassSubject
+    const classSubjects = await prisma.classSubject.findMany({
+        where: { classId },
+        include: {
+            subject: true,
+        },
+        distinct: ['subjectId'], // avoid duplicates if multiple sections
+    });
+
+    // Extract only the subject objects
+    const subjects = classSubjects.map((cs) => cs.subject);
+
+    return subjects;
+};
+
 const updateSubject = async (
     id: number,
     payload: Partial<Subject>
@@ -154,6 +180,7 @@ const deleteSubject = async (id: number): Promise<Subject> => {
 export const SubjectService = {
     createSubject,
     getAllSubjects,
+    getSubjectsByClassId,
     getSingleSubject,
     updateSubject,
     deleteSubject,
