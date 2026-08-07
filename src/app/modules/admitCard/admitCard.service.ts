@@ -19,22 +19,60 @@ import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 import { fileUploader } from '../../helper/fileUploader.js';
 
-const BATCH_SIZE = 10;
+// ── Low-memory settings ──────────────────────────────────────────────
+const BATCH_SIZE = 2;                 // critical for 1GB RAM
 const isLocalDev = process.env.NODE_ENV !== 'production';
 
 let browserInstance: Browser | null = null;
+let pagesGenerated = 0;
+const RESTART_BROWSER_AFTER = 8;      // restart very frequently
 
 const getBrowser = async (): Promise<Browser> => {
+    if (pagesGenerated >= RESTART_BROWSER_AFTER) {
+        console.log(`[admit-pdf] Restarting browser after ${pagesGenerated} pages (low-memory mode)`);
+        if (browserInstance) {
+            try {
+                await browserInstance.close();
+            } catch {}
+            browserInstance = null;
+        }
+        pagesGenerated = 0;
+
+        // Force garbage collection if available
+        if (global.gc) {
+            global.gc();
+        }
+    }
+
     if (!browserInstance || !browserInstance.connected) {
+        const commonArgs = [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-first-run',
+            '--safebrowsing-disable-auto-update',
+            '--js-flags=--max-old-space-size=384', // limit V8 heap
+        ];
+
         if (isLocalDev) {
             const puppeteer = await import('puppeteer');
             browserInstance = (await puppeteer.default.launch({
                 headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+                args: commonArgs,
             })) as unknown as Browser;
         } else {
             browserInstance = await puppeteerCore.launch({
-                args: chromium.args,
+                args: [...chromium.args, ...commonArgs],
                 executablePath: await chromium.executablePath(),
                 headless: true,
             });
@@ -46,7 +84,7 @@ const getBrowser = async (): Promise<Browser> => {
 const warmupBrowser = async (): Promise<void> => {
     try {
         await getBrowser();
-        console.log('Puppeteer browser pre-warmed successfully');
+        console.log('Puppeteer browser pre-warmed (low-memory mode)');
     } catch (error) {
         console.error('Failed to pre-warm Puppeteer browser:', error);
     }
@@ -68,13 +106,13 @@ const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> =>
         const sharp = (await import('sharp')).default;
 
         const headerBuf = await sharp(raw)
-            .resize(160, 160, { fit: 'inside', withoutEnlargement: true })
-            .png({ quality: 80, compressionLevel: 9 })
+            .resize(120, 120, { fit: 'inside', withoutEnlargement: true })
+            .png({ quality: 70, compressionLevel: 9 })
             .toBuffer();
 
         const markBuf = await sharp(raw)
-            .resize(80, 80, { fit: 'inside', withoutEnlargement: true })
-            .png({ quality: 60, compressionLevel: 9 })
+            .resize(60, 60, { fit: 'inside', withoutEnlargement: true })
+            .png({ quality: 50, compressionLevel: 9 })
             .toBuffer();
 
         logoHeaderCache = `data:image/png;base64,${headerBuf.toString('base64')}`;
@@ -102,8 +140,8 @@ const loadPrincipalSignature = async (): Promise<string> => {
         try {
             const sharp = (await import('sharp')).default;
             const resized = await sharp(raw)
-                .resize(180, 70, { fit: 'inside', withoutEnlargement: true })
-                .png({ quality: 80 })
+                .resize(140, 55, { fit: 'inside', withoutEnlargement: true })
+                .png({ quality: 70 })
                 .toBuffer();
 
             principalSignatureCache = `data:image/png;base64,${resized.toString('base64')}`;
@@ -133,20 +171,20 @@ const getBengaliFontBase64 = async (): Promise<string> => {
     return bengaliFontBase64Cache;
 };
 
-// ── Photo & Signature helpers ────────────────────────────────────────
+// ── Photo & Signature helpers (smaller sizes) ────────────────────────
 const toCloudinaryThumbnail = (url: string): string => {
     if (!url.includes('/upload/')) return url;
-    return url.replace('/upload/', '/upload/w_200,h_240,c_fill,q_auto,f_auto/');
+    return url.replace('/upload/', '/upload/w_100,h_120,c_fill,q_auto:low,f_auto/');
 };
 
 const toCloudinarySignature = (url: string): string => {
     if (!url.includes('/upload/')) return url;
-    return url.replace('/upload/', '/upload/w_200,h_80,c_fit,q_auto,f_auto/');
+    return url.replace('/upload/', '/upload/w_140,h_55,c_fit,q_auto:low,f_auto/');
 };
 
 const fetchImageAsBase64 = async (url: string): Promise<string | null> => {
     try {
-        const response = await fetch(url);
+        const response = await fetch(url, { signal: AbortSignal.timeout(8000) });
         if (!response.ok) return null;
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
@@ -167,27 +205,31 @@ const preloadPhotosAndSignatures = async (
     const photoCache = new Map<number, string | null>();
     const signatureCache = new Map<number, string | null>();
 
-    await Promise.all(
-        enrollments.map(async (enrollment) => {
-            // Photo
-            if (enrollment.photo) {
-                const thumbnailUrl = toCloudinaryThumbnail(enrollment.photo);
-                const base64 = await fetchImageAsBase64(thumbnailUrl);
-                photoCache.set(enrollment.id, base64);
-            } else {
-                photoCache.set(enrollment.id, null);
-            }
+    // Process in small chunks to avoid memory spikes
+    const CHUNK = 5;
+    for (let i = 0; i < enrollments.length; i += CHUNK) {
+        const chunk = enrollments.slice(i, i + CHUNK);
 
-            // Signature
-            if (enrollment.signature) {
-                const sigUrl = toCloudinarySignature(enrollment.signature);
-                const base64 = await fetchImageAsBase64(sigUrl);
-                signatureCache.set(enrollment.id, base64);
-            } else {
-                signatureCache.set(enrollment.id, null);
-            }
-        })
-    );
+        await Promise.all(
+            chunk.map(async (enrollment) => {
+                if (enrollment.photo) {
+                    const thumbnailUrl = toCloudinaryThumbnail(enrollment.photo);
+                    const base64 = await fetchImageAsBase64(thumbnailUrl);
+                    photoCache.set(enrollment.id, base64);
+                } else {
+                    photoCache.set(enrollment.id, null);
+                }
+
+                if (enrollment.signature) {
+                    const sigUrl = toCloudinarySignature(enrollment.signature);
+                    const base64 = await fetchImageAsBase64(sigUrl);
+                    signatureCache.set(enrollment.id, base64);
+                } else {
+                    signatureCache.set(enrollment.id, null);
+                }
+            })
+        );
+    }
 
     return { photoCache, signatureCache };
 };
@@ -212,7 +254,7 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
         cards.map(async (card) => {
             const qrPayload = `${process.env.FRONTEND_URL}/admit-cards/verify/${card.student.studentEnrollmentId}/${card.exam.examId}`;
             const qrDataUrl = await QRCode.toDataURL(qrPayload, {
-                width: 100,
+                width: 90,
                 margin: 0,
                 errorCorrectionLevel: 'M',
             });
@@ -618,15 +660,31 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
     </html>`;
 };
 
-const generatePdfBuffer = async (html: string): Promise<Buffer> => {
+const generatePdfBuffer = async (html: string, pageCount: number): Promise<Buffer> => {
     const t0 = Date.now();
     const browser = await getBrowser();
     console.log(`[admit-pdf] browser ready in ${Date.now() - t0}ms`);
 
     const page = await browser.newPage();
     try {
+        // Limit page resources
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const resourceType = req.resourceType();
+            if (['stylesheet', 'font', 'image', 'media', 'websocket'].includes(resourceType)) {
+                // We already embed everything as base64, so block external requests
+                if (!req.url().startsWith('data:')) {
+                    return req.abort();
+                }
+            }
+            req.continue();
+        });
+
         const t1 = Date.now();
-        await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20_000 });
+        await page.setContent(html, {
+            waitUntil: 'domcontentloaded',
+            timeout: 45_000,
+        });
         console.log(
             `[admit-pdf] setContent ${Date.now() - t1}ms (html ~${(html.length / 1024).toFixed(0)} KB)`
         );
@@ -637,14 +695,16 @@ const generatePdfBuffer = async (html: string): Promise<Buffer> => {
             printBackground: true,
             preferCSSPageSize: true,
             margin: { top: '6mm', right: '6mm', bottom: '6mm', left: '6mm' },
+            timeout: 45_000,
         });
         console.log(
             `[admit-pdf] page.pdf ${Date.now() - t2}ms → ${(pdfBuffer.byteLength / 1024).toFixed(0)} KB`
         );
 
+        pagesGenerated += pageCount;
         return Buffer.from(pdfBuffer);
     } finally {
-        await page.close();
+        await page.close().catch(() => {});
     }
 };
 
@@ -654,6 +714,9 @@ const mergePdfBuffers = async (buffers: Buffer[]): Promise<Buffer> => {
         const doc = await PDFDocument.load(buffer);
         const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
         copiedPages.forEach((p) => mergedPdf.addPage(p));
+        // Help GC
+        // @ts-ignore
+        buffer = null;
     }
     return Buffer.from(await mergedPdf.save());
 };
@@ -742,13 +805,13 @@ const generateAdmitCardsForEnrollments = async (
         endDate: exam.endDate,
     };
 
-    // ── Preload photos + signatures ──────────────────────────────────
+    // ── Preload photos + signatures (chunked) ────────────────────────
     const tPhoto = Date.now();
     const { photoCache, signatureCache } = await preloadPhotosAndSignatures(
         enrollments.map((e) => ({
             id: e.id,
             photo: e.student.photo,
-            signature: (e.student as any).signature ?? null, // support if field exists
+            signature: (e.student as any).signature ?? null,
         }))
     );
     console.log(
@@ -764,7 +827,7 @@ const generateAdmitCardsForEnrollments = async (
             motherName: enrollment.student.motherName,
             rollNumber: enrollment.rollNumber,
             photo: photoCache.get(enrollment.id) ?? null,
-            signature: signatureCache.get(enrollment.id) ?? null, // ← new
+            signature: signatureCache.get(enrollment.id) ?? null,
             className: enrollment.class.name,
             sectionName: enrollment.section.name,
         };
@@ -782,20 +845,35 @@ const generateAdmitCardsForEnrollments = async (
         };
     }
 
+    // ── Sequential batch processing (safest for 1GB) ─────────────────
     const batches: IAdmitCardData[][] = [];
     for (let i = 0; i < cards.length; i += BATCH_SIZE) {
         batches.push(cards.slice(i, i + BATCH_SIZE));
     }
 
+    console.log(
+        `[admit-cards] Low-memory mode → ${cards.length} cards in ${batches.length} batches of ${BATCH_SIZE}`
+    );
+
     const batchPdfBuffers: Buffer[] = [];
-    for (const [i, batch] of batches.entries()) {
+
+    for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
         const tBatch = Date.now();
+
         const html = await renderAdmitCardHtml(batch);
-        const buffer = await generatePdfBuffer(html);
+        const buffer = await generatePdfBuffer(html, batch.length);
+
         console.log(
             `[admit-batch ${i + 1}/${batches.length}] ${Date.now() - tBatch}ms (${batch.length} cards)`
         );
+
         batchPdfBuffers.push(buffer);
+
+        // Small delay to let system breathe
+        if (i < batches.length - 1) {
+            await new Promise((r) => setTimeout(r, 300));
+        }
     }
 
     const pdfBuffer =

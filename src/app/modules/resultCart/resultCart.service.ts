@@ -17,23 +17,59 @@ import type {
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
 
-const BATCH_SIZE = 10;
+// ── Low-memory settings ──────────────────────────────────────────────
+const BATCH_SIZE = 2;
 const isLocalDev = process.env.NODE_ENV !== 'production';
 
-// ── Shared browser ───────────────────────────────────────────────────
 let browserInstance: Browser | null = null;
+let pagesGenerated = 0;
+const RESTART_BROWSER_AFTER = 8;
 
 const getBrowser = async (): Promise<Browser> => {
+    if (pagesGenerated >= RESTART_BROWSER_AFTER) {
+        console.log(`[result-pdf] Restarting browser after ${pagesGenerated} pages (low-memory mode)`);
+        if (browserInstance) {
+            try {
+                await browserInstance.close();
+            } catch {}
+            browserInstance = null;
+        }
+        pagesGenerated = 0;
+
+        if (global.gc) {
+            global.gc();
+        }
+    }
+
     if (!browserInstance || !browserInstance.connected) {
+        const commonArgs = [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu',
+            '--disable-software-rasterizer',
+            '--disable-extensions',
+            '--disable-background-networking',
+            '--disable-default-apps',
+            '--disable-sync',
+            '--disable-translate',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
+            '--no-first-run',
+            '--safebrowsing-disable-auto-update',
+            '--js-flags=--max-old-space-size=384',
+        ];
+
         if (isLocalDev) {
             const puppeteer = await import('puppeteer');
             browserInstance = (await puppeteer.default.launch({
                 headless: true,
-                args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+                args: commonArgs,
             })) as unknown as Browser;
         } else {
             browserInstance = await puppeteerCore.launch({
-                args: chromium.args,
+                args: [...chromium.args, ...commonArgs],
                 executablePath: await chromium.executablePath(),
                 headless: true,
             });
@@ -45,13 +81,13 @@ const getBrowser = async (): Promise<Browser> => {
 const warmupBrowser = async (): Promise<void> => {
     try {
         await getBrowser();
-        console.log('Puppeteer browser pre-warmed successfully (result cards)');
+        console.log('Puppeteer browser pre-warmed successfully (result cards - low-memory)');
     } catch (error) {
         console.error('Failed to pre-warm Puppeteer browser (result cards):', error);
     }
 };
 
-// ── Logo: load once, resize small ────────────────────────────────────
+// ── Logo ─────────────────────────────────────────────────────────────
 let logoHeaderCache: string | null = null;
 let logoMarkCache: string | null = null;
 
@@ -67,21 +103,19 @@ const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> =>
         const sharp = (await import('sharp')).default;
 
         const headerBuf = await sharp(raw)
-            .resize(160, 160, { fit: 'inside', withoutEnlargement: true })
-            .png({ quality: 80, compressionLevel: 9 })
+            .resize(120, 120, { fit: 'inside', withoutEnlargement: true })
+            .png({ quality: 70, compressionLevel: 9 })
             .toBuffer();
 
         const markBuf = await sharp(raw)
-            .resize(80, 80, { fit: 'inside', withoutEnlargement: true })
-            .png({ quality: 60, compressionLevel: 9 })
+            .resize(60, 60, { fit: 'inside', withoutEnlargement: true })
+            .png({ quality: 50, compressionLevel: 9 })
             .toBuffer();
 
         logoHeaderCache = `data:image/png;base64,${headerBuf.toString('base64')}`;
         logoMarkCache = `data:image/png;base64,${markBuf.toString('base64')}`;
     } catch {
-        console.warn(
-            '[result-cards] sharp not available — using original logo (pnpm add sharp for smaller/faster PDFs)'
-        );
+        console.warn('[result-cards] sharp not available — using original logo');
         const b64 = `data:image/png;base64,${raw.toString('base64')}`;
         logoHeaderCache = b64;
         logoMarkCache = b64;
@@ -90,11 +124,7 @@ const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> =>
     return { header: logoHeaderCache!, mark: logoMarkCache! };
 };
 
-
-
-
-// ── Principal Signature ──────────────────────────────────────────────
-// ── Principal Signature ──────────────────────────────────────────────
+// ── Principal Signature (fixed infinite recursion) ───────────────────
 let principalSignatureCache: string | null = null;
 
 const loadPrincipalSignature = async (): Promise<string> => {
@@ -115,13 +145,12 @@ const loadPrincipalSignature = async (): Promise<string> => {
             try {
                 const sharp = (await import('sharp')).default;
                 const resized = await sharp(raw)
-                    .resize(200, 80, { fit: 'inside', withoutEnlargement: true })
-                    .png({ quality: 90 })
+                    .resize(160, 65, { fit: 'inside', withoutEnlargement: true })
+                    .png({ quality: 80 })
                     .toBuffer();
 
                 principalSignatureCache = `data:image/png;base64,${resized.toString('base64')}`;
             } catch {
-                // sharp not available → use original
                 const ext = path.extname(sigPath).toLowerCase();
                 const mime = ext === '.jpg' || ext === '.jpeg' ? 'image/jpeg' : 'image/png';
                 principalSignatureCache = `data:${mime};base64,${raw.toString('base64')}`;
@@ -133,17 +162,15 @@ const loadPrincipalSignature = async (): Promise<string> => {
         }
     }
 
-    const principalSig = await loadPrincipalSignature();
-    console.log('Principal signature loaded?', principalSig ? 'YES (' + principalSig.slice(0, 50) + '...)' : 'NO');
-
     console.warn(
         '[result-cards] Principal signature NOT FOUND. Tried:\n' +
-        possiblePaths.map(p => '  - ' + p).join('\n')
+            possiblePaths.map((p) => '  - ' + p).join('\n')
     );
     principalSignatureCache = '';
     return '';
 };
-// ── HTML ─────────────────────────────────────────────────────────────
+
+// ── Helpers ──────────────────────────────────────────────────────────
 const gradeBadgeClass = (grade: string): string => {
     if (grade.startsWith('A')) return 'badge-green';
     if (grade === 'F' || grade.toUpperCase() === 'FAIL') return 'badge-red';
@@ -241,9 +268,11 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                         <td class="value">${card.student.className} · ${card.student.sectionName}</td>
                         <td class="label">Date of Birth</td>
                         <td class="value">${new Date(card.student.dateOfBirth).toLocaleDateString('en-GB', {
-                day: '2-digit', month: '2-digit', year: 'numeric',
-                timeZone: 'Asia/Dhaka',
-            })}</td>
+                            day: '2-digit',
+                            month: '2-digit',
+                            year: 'numeric',
+                            timeZone: 'Asia/Dhaka',
+                        })}</td>
                     </tr>
                     <tr>
                         <td class="label">Result</td>
@@ -282,10 +311,11 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                             <div class="sig-title">Controller of Examinations</div>
                         </div>
                         <div class="signature-box">
-                            ${principalSig
-                    ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
-                    : `<div class="signature-line"></div>`
-                }
+                            ${
+                                principalSig
+                                    ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
+                                    : `<div class="signature-line"></div>`
+                            }
                             <div class="sig-title">Principal</div>
                         </div>
                     </div>
@@ -463,12 +493,10 @@ table.subject-table .marks { font-weight: 700; }
 }
 .sig-title { font-size: 10px; font-weight: 600; color: #374151; }
 
-/* Principal Signature */
-
 .principal-signature {
-    height: 55px;
+    height: 50px;
     width: auto;
-    max-width: 180px;
+    max-width: 160px;
     object-fit: contain;
     margin: 0 auto 6px;
     display: block;
@@ -479,16 +507,29 @@ table.subject-table .marks { font-weight: 700; }
 </html>`;
 };
 
-const generatePdfBuffer = async (html: string): Promise<Buffer> => {
+const generatePdfBuffer = async (html: string, pageCount: number): Promise<Buffer> => {
     const t0 = Date.now();
     const browser = await getBrowser();
-    console.log(`[pdf] browser ready in ${Date.now() - t0}ms`);
+    console.log(`[result-pdf] browser ready in ${Date.now() - t0}ms`);
 
     const page = await browser.newPage();
     try {
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            if (!req.url().startsWith('data:')) {
+                return req.abort();
+            }
+            req.continue();
+        });
+
         const t1 = Date.now();
-        await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20_000 });
-        console.log(`[pdf] setContent ${Date.now() - t1}ms (html ~${(html.length / 1024).toFixed(0)} KB)`);
+        await page.setContent(html, {
+            waitUntil: 'domcontentloaded',
+            timeout: 45_000,
+        });
+        console.log(
+            `[result-pdf] setContent ${Date.now() - t1}ms (html ~${(html.length / 1024).toFixed(0)} KB)`
+        );
 
         const t2 = Date.now();
         const pdfBuffer = await page.pdf({
@@ -496,12 +537,16 @@ const generatePdfBuffer = async (html: string): Promise<Buffer> => {
             printBackground: true,
             preferCSSPageSize: true,
             margin: { top: '6mm', right: '6mm', bottom: '6mm', left: '6mm' },
+            timeout: 45_000,
         });
-        console.log(`[pdf] page.pdf ${Date.now() - t2}ms → ${(pdfBuffer.byteLength / 1024).toFixed(0)} KB`);
+        console.log(
+            `[result-pdf] page.pdf ${Date.now() - t2}ms → ${(pdfBuffer.byteLength / 1024).toFixed(0)} KB`
+        );
 
+        pagesGenerated += pageCount;
         return Buffer.from(pdfBuffer);
     } finally {
-        await page.close();
+        await page.close().catch(() => {});
     }
 };
 
@@ -599,7 +644,6 @@ const generateResultCardsForEnrollments = async (
             gradePoint: detail.gradePoint,
         }));
 
-        // ── GPA = sum of subject gradePoints ÷ number of subjects ─────
         const totalGradePoints = subjects.reduce((sum, s) => sum + (s.gradePoint || 0), 0);
         const subjectCount = subjects.length || 1;
         const calculatedGPA = totalGradePoints / subjectCount;
@@ -638,18 +682,35 @@ const generateResultCardsForEnrollments = async (
         };
     });
 
+    // ── Sequential batches (safest for 1GB) ──────────────────────────
     const batches: IResultCardData[][] = [];
     for (let i = 0; i < cards.length; i += BATCH_SIZE) {
         batches.push(cards.slice(i, i + BATCH_SIZE));
     }
 
+    console.log(
+        `[result-cards] Low-memory mode → ${cards.length} cards in ${batches.length} batches of ${BATCH_SIZE}`
+    );
+
     const batchPdfBuffers: Buffer[] = [];
-    for (const [i, batch] of batches.entries()) {
+
+    for (let i = 0; i < batches.length; i++) {
+        const batch = batches[i];
         const tBatch = Date.now();
+
         const html = await renderResultCardHtml(batch);
-        const buffer = await generatePdfBuffer(html);
-        console.log(`[batch ${i + 1}/${batches.length}] ${Date.now() - tBatch}ms (${batch.length} cards)`);
+        const buffer = await generatePdfBuffer(html, batch.length);
+
+        console.log(
+            `[result-batch ${i + 1}/${batches.length}] ${Date.now() - tBatch}ms (${batch.length} cards)`
+        );
+
         batchPdfBuffers.push(buffer);
+
+        // Small breathing room
+        if (i < batches.length - 1) {
+            await new Promise((r) => setTimeout(r, 300));
+        }
     }
 
     const pdfBuffer =

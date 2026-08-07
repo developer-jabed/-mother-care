@@ -12,7 +12,7 @@ if (redisUrl) {
         const queueConnection = new IORedis(redisUrl, {
             maxRetriesPerRequest: null,
             enableReadyCheck: false,
-            retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)), // stop retrying fast
+            retryStrategy: (times) => (times > 3 ? null : Math.min(times * 200, 1000)),
             lazyConnect: false,
         });
 
@@ -37,7 +37,6 @@ if (redisUrl) {
     console.warn('⚠️ BULLMQ_REDIS_URL not set — admit card generation will always run synchronously');
 }
 
-/** Quick check before deciding queue vs. direct-fallback path. */
 export const isQueueAvailable = (): boolean => {
     return admitCardQueue !== null && redisAvailable;
 };
@@ -46,12 +45,22 @@ export const addAdmitCardJob = async (data: IAdmitCardJobData): Promise<string> 
     if (!admitCardQueue) {
         throw new Error('Queue not initialized');
     }
+
     const job = await admitCardQueue.add('generate-section', data, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
-        removeOnComplete: { age: 3600 },
-        removeOnFail: { age: 86400 },
+        attempts: 2,
+        backoff: {
+            type: 'exponential',
+            delay: 8000,
+        },
+        removeOnComplete: {
+            age: 3600,
+        },
+        removeOnFail: {
+            age: 86400,
+        },
+        // Note: 'timeout' is no longer supported in JobsOptions
     });
+
     return job.id!;
 };
 

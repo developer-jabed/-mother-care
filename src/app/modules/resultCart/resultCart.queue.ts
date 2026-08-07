@@ -45,12 +45,15 @@ export const addResultCardJob = async (data: IResultCardJobData): Promise<string
     if (!resultCardQueue || !redisAvailable) {
         throw new Error('Queue not available');
     }
+
     const job = await resultCardQueue.add('generate-section', data, {
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 },
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 8000 },
         removeOnComplete: { age: 3600 },
         removeOnFail: { age: 86400 },
+        // Note: 'timeout' is no longer supported in JobsOptions
     });
+
     return String(job.id);
 };
 
@@ -61,11 +64,11 @@ export const getResultCardJobStatus = async (jobId: string) => {
     const job = await resultCardQueue.getJob(jobId);
     if (!job) return null;
 
-    const state = await job.getState(); // waiting | active | completed | failed | delayed | ...
+    const state = await job.getState();
 
     return {
         jobId: String(job.id),
-        state, // frontend checks this exactly
+        state,
         progress: job.progress ?? 0,
         result:
             state === 'completed'

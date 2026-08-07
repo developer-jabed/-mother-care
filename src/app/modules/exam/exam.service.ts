@@ -48,7 +48,7 @@ const getAllExams = async (
     if (currentYear) {
       andConditions.push({ academicYearId: currentYear.id });
     } else {
-      // No current year → return empty
+
       return {
         meta: buildPaginationMeta(0, paginationOptions),
         data: [],
