@@ -31,7 +31,7 @@ const getBrowser = async (): Promise<Browser> => {
         if (browserInstance) {
             try {
                 await browserInstance.close();
-            } catch {}
+            } catch { }
             browserInstance = null;
         }
         pagesGenerated = 0;
@@ -164,7 +164,7 @@ const loadPrincipalSignature = async (): Promise<string> => {
 
     console.warn(
         '[result-cards] Principal signature NOT FOUND. Tried:\n' +
-            possiblePaths.map((p) => '  - ' + p).join('\n')
+        possiblePaths.map((p) => '  - ' + p).join('\n')
     );
     principalSignatureCache = '';
     return '';
@@ -268,11 +268,11 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                         <td class="value">${card.student.className} · ${card.student.sectionName}</td>
                         <td class="label">Date of Birth</td>
                         <td class="value">${new Date(card.student.dateOfBirth).toLocaleDateString('en-GB', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric',
-                            timeZone: 'Asia/Dhaka',
-                        })}</td>
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric',
+                timeZone: 'Asia/Dhaka',
+            })}</td>
                     </tr>
                     <tr>
                         <td class="label">Result</td>
@@ -311,11 +311,10 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                             <div class="sig-title">Controller of Examinations</div>
                         </div>
                         <div class="signature-box">
-                            ${
-                                principalSig
-                                    ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
-                                    : `<div class="signature-line"></div>`
-                            }
+                            ${principalSig
+                    ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
+                    : `<div class="signature-line"></div>`
+                }
                             <div class="sig-title">Principal</div>
                         </div>
                     </div>
@@ -546,19 +545,25 @@ const generatePdfBuffer = async (html: string, pageCount: number): Promise<Buffe
         pagesGenerated += pageCount;
         return Buffer.from(pdfBuffer);
     } finally {
-        await page.close().catch(() => {});
+        await page.close().catch(() => { });
     }
 };
 
 const mergePdfBuffers = async (buffers: Buffer[]): Promise<Buffer> => {
     const mergedPdf = await PDFDocument.create();
+
     for (const buffer of buffers) {
         const doc = await PDFDocument.load(buffer);
-        const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
-        copiedPages.forEach((p) => mergedPdf.addPage(p));
+        const pages = await mergedPdf.copyPages(doc, doc.getPageIndices());
+        pages.forEach((page) => mergedPdf.addPage(page));
     }
+
+    // Help garbage collection on low-memory servers
+    buffers.length = 0;
+
     return Buffer.from(await mergedPdf.save());
 };
+
 
 const generateResultCardsForEnrollments = async (
     enrollmentIds: number[],

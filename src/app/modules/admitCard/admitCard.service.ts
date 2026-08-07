@@ -33,7 +33,7 @@ const getBrowser = async (): Promise<Browser> => {
         if (browserInstance) {
             try {
                 await browserInstance.close();
-            } catch {}
+            } catch { }
             browserInstance = null;
         }
         pagesGenerated = 0;
@@ -317,11 +317,10 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
 
                 <div class="body">
                     <div class="photo-box">
-                        ${
-                            card.student.photo
-                                ? `<img src="${card.student.photo}" alt="Student Photo" />`
-                                : `<div class="no-photo">Photo</div>`
-                        }
+                        ${card.student.photo
+                    ? `<img src="${card.student.photo}" alt="Student Photo" />`
+                    : `<div class="no-photo">Photo</div>`
+                }
                     </div>
 
                     <div class="student-info">
@@ -341,9 +340,8 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                     </div>
                 </div>
 
-                ${
-                    rowCount > 0
-                        ? `
+                ${rowCount > 0
+                    ? `
                     <div class="schedule-title">Exam Schedule</div>
                     <table class="schedule">
                         <thead>
@@ -357,24 +355,22 @@ const renderAdmitCardHtml = async (cards: IAdmitCardData[]): Promise<string> => 
                         </thead>
                         <tbody>${scheduleRows}</tbody>
                     </table>`
-                        : `<p class="no-schedule">Exam schedule will be announced later.</p>`
+                    : `<p class="no-schedule">Exam schedule will be announced later.</p>`
                 }
 
                 <div class="footer">
                     <div class="signature-box">
-                        ${
-                            principalSig
-                                ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
-                                : `<div class="signature-line"></div>`
-                        }
+                        ${principalSig
+                    ? `<img src="${principalSig}" class="principal-signature" alt="Principal Signature" />`
+                    : `<div class="signature-line"></div>`
+                }
                         <div>Principal's Signature</div>
                     </div>
                     <div class="signature-box">
-                        ${
-                            card.student.signature
-                                ? `<img src="${card.student.signature}" class="student-signature" alt="Student Signature" />`
-                                : `<div class="signature-line"></div>`
-                        }
+                        ${card.student.signature
+                    ? `<img src="${card.student.signature}" class="student-signature" alt="Student Signature" />`
+                    : `<div class="signature-line"></div>`
+                }
                         <div>Student's Signature</div>
                     </div>
                 </div>
@@ -704,20 +700,22 @@ const generatePdfBuffer = async (html: string, pageCount: number): Promise<Buffe
         pagesGenerated += pageCount;
         return Buffer.from(pdfBuffer);
     } finally {
-        await page.close().catch(() => {});
+        await page.close().catch(() => { });
     }
 };
 
 const mergePdfBuffers = async (buffers: Buffer[]): Promise<Buffer> => {
     const mergedPdf = await PDFDocument.create();
+
     for (const buffer of buffers) {
         const doc = await PDFDocument.load(buffer);
-        const copiedPages = await mergedPdf.copyPages(doc, doc.getPageIndices());
-        copiedPages.forEach((p) => mergedPdf.addPage(p));
-        // Help GC
-        // @ts-ignore
-        buffer = null;
+        const pages = await mergedPdf.copyPages(doc, doc.getPageIndices());
+        pages.forEach((page) => mergedPdf.addPage(page));
     }
+
+    // Help garbage collection on low-memory servers
+    buffers.length = 0;
+
     return Buffer.from(await mergedPdf.save());
 };
 
