@@ -119,6 +119,7 @@ const queueResultSmsForExam = async (
             data: {
                 studentEnrollmentId: enrollment.id,
                 examId,
+                type: 'RESULT',          // ← যোগ করো
                 phone: enrollment.student.phone,
                 message,
             },
@@ -131,15 +132,22 @@ const queueResultSmsForExam = async (
         });
 
         await prisma.smsLog.upsert({
-            where: { studentEnrollmentId_examId: { studentEnrollmentId: enrollment.id, examId } },
+            where: {
+                studentEnrollmentId_examId: {
+                    studentEnrollmentId: enrollment.id,
+                    examId,
+                },
+            },
             update: {
                 status: 'PENDING',
                 message,
-                phone: enrollment.student.phone
+                phone: enrollment.student.phone,
+                type: 'RESULT',
             },
             create: {
                 studentEnrollmentId: enrollment.id,
                 examId,
+                type: 'RESULT',          // ← যোগ করো
                 phone: enrollment.student.phone,
                 message,
                 status: 'PENDING',
@@ -163,30 +171,47 @@ const queueResultSmsForExam = async (
         skippedAlreadySent,
     };
 };
-
 const getSmsLogs = async (
     filters: ISmsLogFilters,
     query: PaginationQuery
 ) => {
-    const { searchTerm, examId, studentEnrollmentId, status, phone } = filters;
-    const { page, limit, skip, take, sortBy, sortOrder } = calculatePagination(query);
+    const {
+        searchTerm,
+        examId,
+        studentEnrollmentId,
+        studentFeeId,
+        type,
+        status,
+        phone,
+    } = filters;
+
+    const { page, limit, skip, take, sortBy, sortOrder } =
+        calculatePagination(query);
 
     const andConditions: Prisma.SmsLogWhereInput[] = [];
 
     if (searchTerm) {
         andConditions.push({
-            OR: smsLogSearchableFields.map(field => ({
+            OR: smsLogSearchableFields.map((field) => ({
                 [field]: { contains: searchTerm, mode: 'insensitive' },
             })),
         });
     }
 
     if (examId) {
-        andConditions.push({ examId });
+        andConditions.push({ examId: Number(examId) });
     }
 
     if (studentEnrollmentId) {
-        andConditions.push({ studentEnrollmentId });
+        andConditions.push({ studentEnrollmentId: Number(studentEnrollmentId) });
+    }
+
+    if (studentFeeId) {
+        andConditions.push({ studentFeeId: Number(studentFeeId) });
+    }
+
+    if (type) {
+        andConditions.push({ type });
     }
 
     if (status) {
@@ -194,7 +219,9 @@ const getSmsLogs = async (
     }
 
     if (phone) {
-        andConditions.push({ phone: { contains: phone, mode: 'insensitive' } });
+        andConditions.push({
+            phone: { contains: phone, mode: 'insensitive' },
+        });
     }
 
     const whereConditions: Prisma.SmsLogWhereInput =
@@ -207,9 +234,19 @@ const getSmsLogs = async (
         orderBy: { [sortBy]: sortOrder },
         include: {
             exam: { select: { id: true, name: true } },
-            enrollment: {                     
+            studentFee: {
+                select: {
+                    id: true,
+                    amount: true,
+                    status: true,
+                    feeType: { select: { displayName: true } },
+                },
+            },
+            enrollment: {
                 include: {
-                    student: { select: { id: true, fullName: true, phone: true } },
+                    student: {
+                        select: { id: true, fullName: true, phone: true },
+                    },
                 },
             },
         },
@@ -218,7 +255,14 @@ const getSmsLogs = async (
     const total = await prisma.smsLog.count({ where: whereConditions });
 
     return {
-        meta: buildPaginationMeta(total, { page, limit, skip, take, sortBy, sortOrder }),
+        meta: buildPaginationMeta(total, {
+            page,
+            limit,
+            skip,
+            take,
+            sortBy,
+            sortOrder,
+        }),
         data: result,
     };
 };

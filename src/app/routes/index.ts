@@ -15,6 +15,7 @@ import dashboardRoutes from "../modules/dashboard/dashboard.route.js";
 import admitCardRoutes from "../modules/admitCard/admitCard.route.js";
 import examScheduleRoutes from "../modules/examSchedule/examSchedule.route.js";
 import resultCardRoutes from "../modules/resultCart/resultCart.route.js";
+import feeRoutes from "../modules/fee/fee.route.js";
 
 async function registerRoutes(fastify: FastifyInstance): Promise<void> {
   // Health Check
@@ -86,7 +87,10 @@ async function registerRoutes(fastify: FastifyInstance): Promise<void> {
 
   fastify.register(resultCardRoutes, {
     prefix: "/result-cards"
-  })
+  });
+  fastify.register(feeRoutes, {
+    prefix: "/fees"
+  });
 }
 
 export default registerRoutes;

@@ -21,6 +21,7 @@ import "./app/modules/Sms/sms.worker.js";
 import { startKeepAliveCron } from "./app/shared/keepAlive.js";
 import { AdmitCardService } from './app/modules/admitCard/admitCard.service.js';
 import { ResultCardService } from "./app/modules/resultCart/resultCart.service.js";
+import { startFeeDueAlertCron } from "./jobs/feeDueAlert.job.js";
 
 
 const require = createRequire(import.meta.url);
@@ -101,7 +102,7 @@ const buildApp = async () => {
   await app.register(queuePlugin);
   AdmitCardService.warmupBrowser();
   ResultCardService.warmupBrowser();
-
+  startFeeDueAlertCron(app);       // ✅ সঠিক
   // ── Lifecycle hooks ────────────────────────────────────────
   app.addHook("onReady", () => {
     app.log.info("✅ Server is ready and accepting connections");

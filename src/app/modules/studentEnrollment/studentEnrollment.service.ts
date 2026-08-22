@@ -229,6 +229,7 @@ const bulkPromoteStudents = async (payload: BulkPromoteInput) => {
     };
 };
 
+
 const getEnrollmentById = async (id: number) => {
     const enrollment = await prisma.studentEnrollment.findUnique({
         where: { id },
@@ -237,6 +238,13 @@ const getEnrollmentById = async (id: number) => {
             academicYear: true,
             class: true,
             section: true,
+            studentFees: {
+                include: {
+                    feeType: true,
+                    payments: true,
+                },
+                orderBy: [{ year: "desc" }, { month: "desc" }],
+            },
         },
     });
 

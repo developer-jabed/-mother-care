@@ -32,6 +32,7 @@ model Admin {
   designation String?
   joiningDate DateTime?
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  feePayments FeePayment[]
 }
 
 model AcademicYear {
@@ -45,6 +46,7 @@ model AcademicYear {
   exams         Exam[]
   gradingScales GradingScale[]
   enrollments   StudentEnrollment[]
+  feeStructures FeeStructure[]
 
   @@index([isCurrent])
 }
@@ -59,6 +61,7 @@ model Class {
   examSchedules ExamSchedule[]
   sections      Section[]
   enrollments   StudentEnrollment[]
+  feeStructures FeeStructure[]
 }
 
 model Section {
@@ -113,6 +116,7 @@ model StudentEnrollment {
   promotions     StudentEnrollment[] @relation("PromotionHistory")
   section        Section             @relation(fields: [sectionId], references: [id], onDelete: Cascade)
   student        Student             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  studentFees StudentFee[]
 
   @@unique([studentId, academicYearId])
   @@unique([academicYearId, classId, sectionId, rollNumber])
@@ -236,22 +240,31 @@ model GradingScale {
 }
 
 model SmsLog {
-  id                  Int               @id @default(autoincrement())
+  id                  Int       @id @default(autoincrement())
   studentEnrollmentId Int
-  examId              Int
+  examId              Int?      // optional — Fee SMS এ null থাকবে
+  studentFeeId        Int?      // Fee SMS এর জন্য
+  type                String    @default("RESULT") // RESULT | FEE_PAYMENT | FEE_DUE
   phone               String
   message             String
-  status              SmsStatus         @default(PENDING)
+  status              SmsStatus @default(PENDING)
   providerMessageId   String?
   errorMessage        String?
-  attemptCount        Int               @default(0)
+  attemptCount        Int       @default(0)
   sentAt              DateTime?
-  createdAt           DateTime          @default(now())
-  exam                Exam              @relation(fields: [examId], references: [id], onDelete: Cascade)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  exam                Exam?             @relation(fields: [examId], references: [id], onDelete: SetNull)
   enrollment          StudentEnrollment @relation(fields: [studentEnrollmentId], references: [id], onDelete: Cascade)
+  studentFee          StudentFee?       @relation(fields: [studentFeeId], references: [id], onDelete: SetNull)
 
   @@unique([studentEnrollmentId, examId])
   @@index([examId, status])
+  @@index([studentEnrollmentId, type])
+  @@index([status])
+  @@index([type])
+  @@index([createdAt])
 }
 
 enum UserRole {
@@ -280,3 +293,104 @@ enum SmsStatus {
   FAILED
   DELIVERED
 }
+
+
+model FeeType {
+  id          Int            @id @default(autoincrement())
+  name        String         @unique      // TUITION, EXAMINATION, TRANSPORT
+  displayName String                       // "মাসিক বেতন", "পরীক্ষা ফি", "পরিবহন ফি"
+  frequency   FeeFrequency   @default(MONTHLY)
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  structures  FeeStructure[]
+  studentFees StudentFee[]
+}
+
+
+
+model FeeStructure {
+  id             Int          @id @default(autoincrement())
+  feeTypeId      Int
+  academicYearId Int
+  classId        Int
+  amount         Float
+  isActive       Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  feeType        FeeType      @relation(fields: [feeTypeId], references: [id])
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  class          Class        @relation(fields: [classId], references: [id])
+  studentFees    StudentFee[]
+
+  @@unique([feeTypeId, academicYearId, classId])
+}  
+
+
+
+model StudentFee {
+  id                  Int               @id @default(autoincrement())
+  studentEnrollmentId Int
+  feeStructureId      Int
+  feeTypeId           Int
+  amount              Float             // মূল পরিমাণ
+  discount            Float             @default(0)
+  fine                Float             @default(0)
+  payableAmount       Float             // amount + fine - discount
+  paidAmount          Float             @default(0)
+  status              FeeStatus         @default(PENDING)
+  month               Int?              // 1-12 (মাসিক ফি হলে)
+  year                Int?
+  dueDate             DateTime?
+  remarks             String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  enrollment          StudentEnrollment @relation(fields: [studentEnrollmentId], references: [id], onDelete: Cascade)
+  feeStructure        FeeStructure      @relation(fields: [feeStructureId], references: [id])
+  feeType             FeeType           @relation(fields: [feeTypeId], references: [id])
+  payments            FeePayment[]
+  smsLogs SmsLog[]
+
+  @@unique([studentEnrollmentId, feeTypeId, month, year], name: "unique_student_fee_period")
+  @@index([studentEnrollmentId, status])
+  @@index([status])
+  @@index([feeTypeId, month, year])
+  @@index([status, dueDate])
+}
+
+
+
+model FeePayment {
+  id            Int         @id @default(autoincrement())
+  studentFeeId  Int
+  amount        Float
+  paidAt        DateTime    @default(now())
+  receivedById  Int?        // কোন অ্যাডমিন টাকা নিয়েছে
+  remarks       String?
+  createdAt     DateTime    @default(now())
+
+  studentFee    StudentFee  @relation(fields: [studentFeeId], references: [id], onDelete: Cascade)
+  receivedBy    Admin?      @relation(fields: [receivedById], references: [id])
+
+  @@index([studentFeeId])
+  @@index([paidAt])
+}
+
+
+enum FeeFrequency {
+  MONTHLY
+  YEARLY
+  ONE_TIME
+  PER_EXAM
+}
+
+enum FeeStatus {
+  PENDING
+  PARTIAL
+  PAID
+  WAIVED
+  OVERDUE
+} 

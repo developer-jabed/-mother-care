@@ -1,9 +1,11 @@
 export const smsLogFilterableFields = [
-    'searchTerm',
-    'examId',
-    'studentEnrollmentId',
-    'status',
-    'phone',
+  'searchTerm',
+  'examId',
+  'studentEnrollmentId',
+  'studentFeeId',   // ← নতুন
+  'type',           // ← নতুন
+  'status',
+  'phone',
 ];
 
 export const smsLogSearchableFields = ['phone', 'message'];
