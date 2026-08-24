@@ -747,7 +747,6 @@ const sendDueAlerts = async (fastify: FastifyInstance) => {
   };
 };
 
-
 function buildPaymentSms(params: {
   studentName: string;
   feeName: string;
@@ -765,7 +764,7 @@ function buildPaymentSms(params: {
     params.month && params.year ? ` (${params.month}/${params.year})` : '';
   const remaining = (params.payableAmount - params.paidAmount).toFixed(0);
 
-  return `প্রিয় অভিভাবক, ${params.studentName} (${params.className}-${params.sectionName}, রোল: ${params.roll}) এর ${params.feeName}${monthText} বাবদ ${params.amount} টাকা গ্রহণ করা হয়েছে। মোট পরিশোধিত: ${params.paidAmount} টাকা। বাকি: ${remaining} টাকা। ধন্যবাদ। - Mother Care School`;
+  return `Dear Guardian, payment of Tk. ${params.amount} has been received for ${params.studentName} (${params.className}-${params.sectionName}, Roll: ${params.roll}) against ${params.feeName}${monthText}. Total paid: Tk. ${params.paidAmount}. Remaining: Tk. ${remaining}. Thank you. - Mother Care School`;
 }
 
 function buildDueAlertSms(params: {
@@ -782,10 +781,10 @@ function buildDueAlertSms(params: {
   const monthText =
     params.month && params.year ? ` (${params.month}/${params.year})` : '';
   const dueText = params.dueDate
-    ? ` নির্ধারিত তারিখ: ${params.dueDate.toLocaleDateString('bn-BD')}`
+    ? ` Due date: ${params.dueDate.toLocaleDateString('en-GB')}`
     : '';
 
-  return `প্রিয় অভিভাবক, ${params.studentName} (${params.className}-${params.sectionName}, রোল: ${params.roll}) এর ${params.feeName}${monthText} এর বকেয়া ${params.remaining.toFixed(0)} টাকা।${dueText} অনুগ্রহ করে দ্রুত পরিশোধ করুন। - Mother Care School`;
+  return `Dear Guardian, ${params.studentName} (${params.className}-${params.sectionName}, Roll: ${params.roll}) has an outstanding ${params.feeName}${monthText} of Tk. ${params.remaining.toFixed(0)}.${dueText} Please pay at the earliest. - Mother Care School`;
 }
 
 export const FeeService = {
