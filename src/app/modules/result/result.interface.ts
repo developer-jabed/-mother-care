@@ -69,3 +69,13 @@ export type IStudentResultProfile = {
     className: string;
     sectionName: string;
 };
+
+// types/result.types.ts
+ export type getTopScorersBySubject = {
+  studentName: string;
+  admissionNumber: string;
+  rollNumber: number;
+  marks: number;
+  isCurrentStudent: boolean;
+};
+

@@ -3,7 +3,7 @@ import httpStatus from 'http-status';
 import type { ICombinedRankingFilterRequest, ICombinedRankingResponse, ICombinedRankingRow, ICreateResultPayload, IResultByRollFilterRequest, IResultFilterRequest, ISectionResultFilterRequest } from './result.interface.js';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
-import { calculateSubjectRawTotal, resolveGrade } from './result.utils.js';
+import { calculateSubjectRawTotal, getTopScorersBySubject, resolveGrade } from './result.utils.js';
 import { buildPaginationMeta, type PaginationResult } from '../../helper/paginationHelper.js';
 import { resultSearchableFields } from './result.constant.js';
 
@@ -427,53 +427,72 @@ const calculatePositions = async (
 
     return { updated: results.length };
 };
-
+// result.service.ts
 const getResultsByRoll = async (filters: IResultByRollFilterRequest) => {
-    const { classId, sectionId, rollNumber, examId } = filters;
+  const { classId, sectionId, rollNumber, examId } = filters;
 
-    const enrollment = await prisma.studentEnrollment.findFirst({
-        where: { classId, sectionId, rollNumber, isCurrent: true },
-        include: { student: true, class: true, section: true },
-    });
+  const enrollment = await prisma.studentEnrollment.findFirst({
+    where: { classId, sectionId, rollNumber, isCurrent: true },
+    include: { student: true, class: true, section: true },
+  });
 
-    if (!enrollment) {
-        throw new ApiError(httpStatus.NOT_FOUND, 'No student found for this class, section, and roll number');
-    }
+  if (!enrollment) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'No student found for this class, section, and roll number');
+  }
 
-    const results = await prisma.result.findMany({
-        where: {
-            studentEnrollmentId: enrollment.id,
-            isPublished: true,
-            ...(examId !== undefined ? { examId } : {}),
-        },
-        include: {
-            details: { include: { subject: true } },
-            exam: true,
-        },
-        orderBy: { exam: { startDate: 'desc' } },
-    });
+  const results = await prisma.result.findMany({
+    where: {
+      studentEnrollmentId: enrollment.id,
+      isPublished: true,
+      ...(examId !== undefined ? { examId } : {}),
+    },
+    include: {
+      details: { include: { subject: true } },
+      exam: true,
+    },
+    orderBy: { exam: { startDate: 'desc' } },
+  });
 
-    if (results.length === 0) {
-        throw new ApiError(httpStatus.NOT_FOUND, 'No published results found for this student');
-    }
+  if (results.length === 0) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'No published results found for this student');
+  }
 
-    return {
-        student: {
-            fullName: enrollment.student.fullName,
-            admissionNumber: enrollment.student.admissionNumber,
-            fatherName: enrollment.student.fatherName,
-            motherName: enrollment.student.motherName,
-            gender: enrollment.student.gender,
-            dateOfBirth: enrollment.student.dateOfBirth,
-            phone: enrollment.student.phone,
-            address: enrollment.student.address,
-            photo: enrollment.student.photo,
-            rollNumber: enrollment.rollNumber,
-            className: enrollment.class.name,
-            sectionName: enrollment.section.name,
-        },
-        results,
-    };
+  // One top-scorers lookup PER EXAM (not per subject) — results.length is small (usually 1)
+  const resultsWithTopScorers = await Promise.all(
+    results.map(async (result) => {
+      const topScorersMap = await getTopScorersBySubject(
+        result.examId,
+        enrollment.classId,
+        enrollment.sectionId,
+        enrollment.id
+      );
+
+      const details = result.details.map((detail) => ({
+        ...detail,
+        topScorer: topScorersMap.get(detail.subjectId) ?? null,
+      }));
+
+      return { ...result, details };
+    })
+  );
+
+  return {
+    student: {
+      fullName: enrollment.student.fullName,
+      admissionNumber: enrollment.student.admissionNumber,
+      fatherName: enrollment.student.fatherName,
+      motherName: enrollment.student.motherName,
+      gender: enrollment.student.gender,
+      dateOfBirth: enrollment.student.dateOfBirth,
+      phone: enrollment.student.phone,
+      address: enrollment.student.address,
+      photo: enrollment.student.photo,
+      rollNumber: enrollment.rollNumber,
+      className: enrollment.class.name,
+      sectionName: enrollment.section.name,
+    },
+    results: resultsWithTopScorers,
+  };
 };
 
 const getCombinedRanking = async (
