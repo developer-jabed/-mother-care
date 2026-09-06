@@ -94,17 +94,6 @@ const getDashboardSummary = catchAsync(
   }
 );
 
-const sendDueAlerts = catchAsync(
-  async (req: FastifyRequest, res: FastifyReply) => {
-    const result = await FeeService.sendDueAlerts(req.server);
-    sendResponse(res, {
-      statusCode: httpStatus.OK,
-      success: true,
-      message: result.message,
-      data: result,
-    });
-  }
-);
 const downloadReceipt = catchAsync(
   async (req: FastifyRequest, res: FastifyReply) => {
     const paymentId = Number((req.params as any).paymentId);
@@ -134,6 +123,5 @@ export const FeeController = {
   recordPayment,
   getStudentFees,
   getDashboardSummary,
-  sendDueAlerts,
   downloadReceipt,
 };

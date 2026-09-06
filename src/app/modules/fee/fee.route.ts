@@ -10,20 +10,14 @@ export default async function feeRoutes(fastify: FastifyInstance) {
   fastify.post('/fee-structures', FeeController.createFeeStructure);
 
   // Generate Monthly Fees
+  fastify.post('/fees/generate-monthly', FeeController.generateMonthlyFees);
 
   // Student Fees List
   fastify.get('/fees', FeeController.getStudentFees);
-  fastify.post('/fees/generate-monthly', FeeController.generateMonthlyFees);
-
-
 
   fastify.post('/fees/payment', FeeController.recordPayment);
 
-
   fastify.get('/dashboard', FeeController.getDashboardSummary);
-
-  // Due Alert (Manual / Cron)
-  fastify.post('/fees/send-due-alerts', FeeController.sendDueAlerts);
 
   // Receipt PDF
   fastify.get(

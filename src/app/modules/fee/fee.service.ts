@@ -429,6 +429,15 @@ interface IMonthlySnapshot {
   }[];
 }
 
+type FeeTypeAgg = {
+  feeTypeId: number;
+  feeTypeName: string;
+  paidCount: number;
+  unpaidCount: number;
+  payable: number;
+  collected: number;
+};
+
 const buildMonthlySnapshot = async (
   month: number,
   year: number,
@@ -460,17 +469,7 @@ const buildMonthlySnapshot = async (
   let partialCount = 0;
   let unpaidCount = 0;
 
-  const feeTypeMap = new Map<
-    number,
-    {
-      feeTypeId: number;
-      feeTypeName: string;
-      paidCount: number;
-      unpaidCount: number;
-      payable: number;
-      collected: number;
-    }
-  >();
+  const feeTypeMap = new Map<number, FeeTypeAgg>();
 
   for (const type of feeTypes) {
     feeTypeMap.set(type.id, {
@@ -576,19 +575,18 @@ const getFeeSmsHealth = async (fromDate: Date, toDate: Date) => {
   const grouped = await prisma.smsLog.groupBy({
     by: ['type', 'status'],
     where: {
-      type: { in: ['FEE_DUE', 'FEE_PAYMENT'] },
+      type: { in: ['FEE_PAYMENT'] },
       createdAt: { gte: fromDate, lte: toDate },
     },
     _count: { id: true },
   });
 
   const result = {
-    FEE_DUE: { PENDING: 0, SENT: 0, FAILED: 0, DELIVERED: 0 },
     FEE_PAYMENT: { PENDING: 0, SENT: 0, FAILED: 0, DELIVERED: 0 },
   };
 
   for (const row of grouped) {
-    const type = row.type as 'FEE_DUE' | 'FEE_PAYMENT';
+    const type = row.type as 'FEE_PAYMENT';
     if (result[type]) {
       result[type][row.status] = row._count.id;
     }
@@ -653,100 +651,6 @@ const getDashboardSummary = async (filters: IFeeDashboardFilter = {}) => {
   };
 };
 
-// ────────────────────────────────────────────────
-// Due Alert SMS
-// ────────────────────────────────────────────────
-const sendDueAlerts = async (fastify: FastifyInstance) => {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const dueFees = await prisma.studentFee.findMany({
-    where: {
-      status: { in: ['PENDING', 'PARTIAL', 'OVERDUE'] },
-      feeType: { name: 'TUITION' },
-      dueDate: { lt: today },
-      enrollment: {
-        isCurrent: true,
-        status: 'ACTIVE',
-        student: { phone: { not: null } },
-      },
-    },
-    include: {
-      feeType: true,
-      enrollment: {
-        include: {
-          student: true,
-          class: true,
-          section: true,
-        },
-      },
-    },
-    take: 500,
-  });
-
-  if (dueFees.length === 0) {
-    return { queued: 0, message: 'No overdue tuition fees found' };
-  }
-
-  await prisma.studentFee.updateMany({
-    where: { id: { in: dueFees.map((f) => f.id) } },
-    data: { status: 'OVERDUE' },
-  });
-
-  const jobs = [];
-
-  for (const fee of dueFees) {
-    const remaining = fee.payableAmount - fee.paidAmount;
-    const message = buildDueAlertSms({
-      studentName: fee.enrollment.student.fullName,
-      feeName: fee.feeType.displayName,
-      remaining,
-      month: fee.month,
-      year: fee.year,
-      className: fee.enrollment.class.name,
-      sectionName: fee.enrollment.section.name,
-      roll: fee.enrollment.rollNumber,
-      dueDate: fee.dueDate,
-    });
-
-    const smsLog = await prisma.smsLog.create({
-      data: {
-        studentEnrollmentId: fee.studentEnrollmentId,
-        studentFeeId: fee.id,
-        type: 'FEE_DUE',
-        phone: fee.enrollment.student.phone!,
-        message,
-        status: 'PENDING',
-      },
-    });
-
-    jobs.push({
-      name: 'send-fee-sms',
-      data: {
-        type: 'FEE_DUE',
-        studentEnrollmentId: fee.studentEnrollmentId,
-        phone: fee.enrollment.student.phone!,
-        message,
-        studentFeeId: fee.id,
-        smsLogId: smsLog.id,
-      },
-      opts: {
-        attempts: 4,
-        backoff: { type: 'exponential', delay: 8000 },
-        removeOnComplete: 500,
-        removeOnFail: false,
-      },
-    });
-  }
-
-  await fastify.smsQueue.addBulk(jobs);
-
-  return {
-    queued: jobs.length,
-    message: `${jobs.length} due alert SMS queued successfully`,
-  };
-};
-
 function buildPaymentSms(params: {
   studentName: string;
   feeName: string;
@@ -767,26 +671,6 @@ function buildPaymentSms(params: {
   return `Dear Guardian, payment of Tk. ${params.amount} has been received for ${params.studentName} (${params.className}-${params.sectionName}, Roll: ${params.roll}) against ${params.feeName}${monthText}. Total paid: Tk. ${params.paidAmount}. Remaining: Tk. ${remaining}. Thank you. - Mother Care School`;
 }
 
-function buildDueAlertSms(params: {
-  studentName: string;
-  feeName: string;
-  remaining: number;
-  month: number | null;
-  year: number | null;
-  className: string;
-  sectionName: string;
-  roll: number;
-  dueDate: Date | null;
-}) {
-  const monthText =
-    params.month && params.year ? ` (${params.month}/${params.year})` : '';
-  const dueText = params.dueDate
-    ? ` Due date: ${params.dueDate.toLocaleDateString('en-GB')}`
-    : '';
-
-  return `Dear Guardian, ${params.studentName} (${params.className}-${params.sectionName}, Roll: ${params.roll}) has an outstanding ${params.feeName}${monthText} of Tk. ${params.remaining.toFixed(0)}.${dueText} Please pay at the earliest. - Mother Care School`;
-}
-
 export const FeeService = {
   createFeeType,
   getAllFeeTypes,
@@ -795,5 +679,4 @@ export const FeeService = {
   recordPayment,
   getStudentFees,
   getDashboardSummary,
-  sendDueAlerts,
 };
