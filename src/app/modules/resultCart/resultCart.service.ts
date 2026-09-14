@@ -124,7 +124,7 @@ const loadAndResizeLogo = async (): Promise<{ header: string; mark: string }> =>
     return { header: logoHeaderCache!, mark: logoMarkCache! };
 };
 
-// ── Principal Signature (fixed infinite recursion) ───────────────────
+// ── Principal Signature ──────────────────────────────────────────────
 let principalSignatureCache: string | null = null;
 
 const loadPrincipalSignature = async (): Promise<string> => {
@@ -170,6 +170,27 @@ const loadPrincipalSignature = async (): Promise<string> => {
     return '';
 };
 
+// ── Bengali Font (CRITICAL FIX) ──────────────────────────────────────
+let bengaliFontCache: string | null = null;
+
+const loadBengaliFont = async (): Promise<string> => {
+    if (bengaliFontCache !== null) return bengaliFontCache;
+
+    // ✅ আপনার প্রজেক্ট অনুযায়ী সঠিক পাথ
+    const fontPath = path.join(process.cwd(), 'public', 'fonts', 'NotoSansBengali-Regular.ttf');
+
+    try {
+        const raw = await fs.readFile(fontPath);
+        bengaliFontCache = `data:font/ttf;base64,${raw.toString('base64')}`;
+        console.log('[result-cards] Bengali font (Noto Sans Bengali) loaded successfully');
+    } catch (err) {
+        console.error('[result-cards] Bengali font NOT FOUND at:', fontPath);
+        console.error('→ Check if the file exists at public/fonts/NotoSansBengali-Regular.ttf');
+        bengaliFontCache = '';
+    }
+
+    return bengaliFontCache;
+};
 // ── Helpers ──────────────────────────────────────────────────────────
 const gradeBadgeClass = (grade: string): string => {
     if (grade.startsWith('A')) return 'badge-green';
@@ -190,6 +211,7 @@ const getOverallGrade = (gpa: number): string => {
 const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> => {
     const { header: logo, mark: logoMark } = await loadAndResizeLogo();
     const principalSig = await loadPrincipalSignature();
+    const bengaliFont = await loadBengaliFont(); // ← Bengali font loaded here
 
     const pages = cards
         .map((card) => {
@@ -198,8 +220,8 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                     (row, idx) => `
                     <tr>
                         <td class="sl">${idx + 1}</td>
-                        <td class="code">${row.subjectCode}</td>
-                        <td class="subj">${row.subjectName}</td>
+                        <td class="code">${row.subjectCode || '—'}</td>
+                        <td class="subj">${row.subjectName || '—'}</td>
                         <td class="marks">${row.totalMarks} <span class="marks-sep">/</span> ${row.fullMarks}</td>
                         <td class="grade-cell"><span class="badge ${gradeBadgeClass(row.grade)}">${row.grade}</span></td>
                     </tr>`
@@ -328,15 +350,26 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
 <head>
 <meta charset="utf-8" />
 <style>
+/* ── Bengali Font Face ─────────────────────────────────────────────── */
+@font-face {
+    font-family: 'NotoBn';
+    src: url('${bengaliFont}') format('truetype');
+    font-weight: 400;
+    font-style: normal;
+    font-display: swap;
+}
+
 @page { size: A4; margin: 8mm; }
 * { box-sizing: border-box; margin: 0; padding: 0; }
+
 body {
-    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-family: 'NotoBn', 'Segoe UI', system-ui, -apple-system, sans-serif;
     background: #fff;
     color: #1a2332;
     -webkit-print-color-adjust: exact;
     print-color-adjust: exact;
 }
+
 .result-card {
     position: relative;
     page-break-after: always;
@@ -348,6 +381,7 @@ body {
     padding-bottom: 6px;
 }
 .result-card:last-child { page-break-after: auto; }
+
 .corner-ornament {
     position: absolute; z-index: 3;
     width: 22px; height: 22px;
@@ -357,12 +391,14 @@ body {
 .corner-tr { top: 8px; right: 8px; border-width: 2px 2px 0 0; }
 .corner-bl { bottom: 8px; left: 8px; border-width: 0 0 2px 2px; }
 .corner-br { bottom: 8px; right: 8px; border-width: 0 2px 2px 0; }
+
 .watermark {
     position: absolute; inset: 0;
     display: flex; align-items: center; justify-content: center;
     z-index: 1; opacity: 0.035; pointer-events: none;
 }
 .watermark img { width: 38%; }
+
 .school-header, .result-banner, .section-title,
 .info-table, .subject-table, .card-footer { position: relative; z-index: 2; }
 
@@ -461,8 +497,19 @@ table.subject-table td { border-bottom: 1px solid #e8edf5; padding: 4px 9px; }
 table.subject-table tr:nth-child(even) td { background: #f7f9fd; }
 table.subject-table tr:last-child td { border-bottom: none; }
 table.subject-table .sl { width: 26px; text-align: center; color: #7a8699; font-weight: 600; }
-table.subject-table .code { color: #5b6b8c; font-family: ui-monospace, monospace; font-size: 10.5px; }
-table.subject-table .subj { font-weight: 650; color: #1a2a44; }
+
+/* ── Critical: Force Bengali font on subject columns ── */
+table.subject-table .code {
+    color: #5b6b8c;
+    font-family: 'NotoBn', 'Noto Sans Bengali', 'Segoe UI', sans-serif;
+    font-size: 10.5px;
+}
+table.subject-table .subj {
+    font-weight: 650;
+    color: #1a2a44;
+    font-family: 'NotoBn', 'Noto Sans Bengali', 'Segoe UI', sans-serif;
+}
+
 table.subject-table .marks { font-weight: 700; }
 .marks-sep { color: #9aa5b8; font-weight: 500; margin: 0 1px; }
 
@@ -558,12 +605,10 @@ const mergePdfBuffers = async (buffers: Buffer[]): Promise<Buffer> => {
         pages.forEach((page) => mergedPdf.addPage(page));
     }
 
-    // Help garbage collection on low-memory servers
     buffers.length = 0;
 
     return Buffer.from(await mergedPdf.save());
 };
-
 
 const generateResultCardsForEnrollments = async (
     enrollmentIds: number[],
@@ -712,7 +757,6 @@ const generateResultCardsForEnrollments = async (
 
         batchPdfBuffers.push(buffer);
 
-        // Small breathing room
         if (i < batches.length - 1) {
             await new Promise((r) => setTimeout(r, 300));
         }
