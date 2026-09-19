@@ -34,6 +34,7 @@ export interface IResultCardStudentData {
 
 export interface IResultCardSummary {
     totalMarks: number;
+    totalFullMarks: number;          // ← added
     percentage: number;
     grade: string;
     gradePoint: number;

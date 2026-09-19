@@ -176,7 +176,6 @@ let bengaliFontCache: string | null = null;
 const loadBengaliFont = async (): Promise<string> => {
     if (bengaliFontCache !== null) return bengaliFontCache;
 
-    // ✅ আপনার প্রজেক্ট অনুযায়ী সঠিক পাথ
     const fontPath = path.join(process.cwd(), 'public', 'fonts', 'NotoSansBengali-Regular.ttf');
 
     try {
@@ -191,6 +190,7 @@ const loadBengaliFont = async (): Promise<string> => {
 
     return bengaliFontCache;
 };
+
 // ── Helpers ──────────────────────────────────────────────────────────
 const gradeBadgeClass = (grade: string): string => {
     if (grade.startsWith('A')) return 'badge-green';
@@ -208,10 +208,21 @@ const getOverallGrade = (gpa: number): string => {
     return 'F';
 };
 
+/** Performance comment based on GPA */
+const getPerformanceComment = (gpa: number): string => {
+    if (gpa >= 5.0) return 'Excellent';
+    if (gpa >= 4.5) return 'Outstanding';
+    if (gpa >= 4.0) return 'Very Good';
+    if (gpa >= 3.5) return 'Good';
+    if (gpa >= 3.0) return 'Satisfactory';
+    if (gpa >= 2.0) return 'Need Improvement';
+    return 'Should Study More';
+};
+
 const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> => {
     const { header: logo, mark: logoMark } = await loadAndResizeLogo();
     const principalSig = await loadPrincipalSignature();
-    const bengaliFont = await loadBengaliFont(); // ← Bengali font loaded here
+    const bengaliFont = await loadBengaliFont();
 
     const pages = cards
         .map((card) => {
@@ -232,6 +243,13 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                 ? `<tr>
                         <td class="label">Position</td>
                         <td class="value" colspan="3"><span class="position-pill">${card.summary.position}</span></td>
+                   </tr>`
+                : '';
+
+            const remarksRow = card.summary.remarks
+                ? `<tr>
+                        <td class="label">Remarks</td>
+                        <td class="value remarks" colspan="3">${card.summary.remarks}</td>
                    </tr>`
                 : '';
 
@@ -297,6 +315,14 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
             })}</td>
                     </tr>
                     <tr>
+                        <td class="label">Total Marks</td>
+                        <td class="value total-marks" colspan="3">
+                            <strong>${card.summary.totalMarks}</strong>
+                            <span class="marks-sep"> / </span>
+                            ${card.summary.totalFullMarks}
+                        </td>
+                    </tr>
+                    <tr>
                         <td class="label">Result</td>
                         <td class="value result-value">
                             GPA <strong>${card.summary.gradePoint.toFixed(2)}</strong>
@@ -306,6 +332,7 @@ const renderResultCardHtml = async (cards: IResultCardData[]): Promise<string> =
                         <td class="value pct">${card.summary.percentage.toFixed(2)}%</td>
                     </tr>
                     ${positionRow}
+                    ${remarksRow}
                 </table>
 
                 <div class="section-title"><span class="section-icon">◆</span> Subject-wise Grade / Marks</div>
@@ -478,6 +505,22 @@ table.info-table .result-value { color: #157347; font-size: 12px; }
 table.info-table .result-value strong { font-size: 13.5px; }
 .grade-inline { font-weight: 600; margin-left: 2px; color: #0f5132; }
 table.info-table .pct { font-weight: 700; color: #1e3a8a; }
+
+table.info-table .total-marks {
+    font-size: 13px;
+    color: #1e3a8a;
+}
+table.info-table .total-marks strong {
+    font-size: 14.5px;
+    font-weight: 800;
+}
+
+table.info-table .remarks {
+    font-weight: 700;
+    color: #1e3a8a;
+    font-size: 12.5px;
+}
+
 .position-pill {
     display: inline-block; background: #1e3a8a; color: #fff;
     font-weight: 700; font-size: 10.5px; padding: 2px 10px; border-radius: 999px;
@@ -722,11 +765,12 @@ const generateResultCardsForEnrollments = async (
             student,
             summary: {
                 totalMarks: totalObtained,
+                totalFullMarks: totalFullMarks,          // ← new field
                 percentage: Number(calculatedPercentage.toFixed(2)),
                 grade: getOverallGrade(calculatedGPA),
                 gradePoint: Number(calculatedGPA.toFixed(2)),
                 position: result.position,
-                remarks: result.remarks,
+                remarks: result.remarks?.trim() || getPerformanceComment(calculatedGPA),
             },
             subjects,
         };
