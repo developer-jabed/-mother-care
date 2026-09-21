@@ -12,6 +12,7 @@ export type ISectionResultFilterRequest = {
     classId: number;
     sectionId: number;
 };
+
 export type IResultDetailInput = {
     subjectId: number;
     writtenMarks?: number;
@@ -33,12 +34,22 @@ export type ICombinedRankingFilterRequest = {
     examIds?: number[];
 };
 
+/** Updated row – rank is driven by totalMarks first, then GPA */
 export type ICombinedRankingRow = {
     studentEnrollmentId: number;
-    rollNumber: number | null; // fixed: was `string | null`
+    rollNumber: number | null;
     name: string;
     examCount: number;
+
+    // Primary rank key
+    averageTotalMarks: number | null;
+
+    // Secondary rank key
+    averageGradePoint: number | null;
+
+    // Kept for display / reports
     averagePercentage: number | null;
+
     rank: number | null;
 };
 
@@ -52,7 +63,7 @@ export type IResultByRollFilterRequest = {
     classId: number;
     sectionId: number;
     rollNumber: number;
-    examId?: number; // optional: show one exam, or all published results if omitted
+    examId?: number;
 };
 
 export type IStudentResultProfile = {
@@ -60,7 +71,7 @@ export type IStudentResultProfile = {
     admissionNumber: string;
     fatherName: string | null;
     motherName: string | null;
-    gender: 'MALE' | 'FEMALE' | 'OTHER'; // adjust to match your actual Gender enum values
+    gender: 'MALE' | 'FEMALE' | 'OTHER';
     dateOfBirth: Date;
     phone: string | null;
     address: string | null;
@@ -69,13 +80,3 @@ export type IStudentResultProfile = {
     className: string;
     sectionName: string;
 };
-
-// types/result.types.ts
- export type getTopScorersBySubject = {
-  studentName: string;
-  admissionNumber: string;
-  rollNumber: number;
-  marks: number;
-  isCurrentStudent: boolean;
-};
-

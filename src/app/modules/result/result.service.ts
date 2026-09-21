@@ -1,13 +1,58 @@
 import { Prisma, type Result } from '@prisma/client';
 import httpStatus from 'http-status';
-import type { ICombinedRankingFilterRequest, ICombinedRankingResponse, ICombinedRankingRow, ICreateResultPayload, IResultByRollFilterRequest, IResultFilterRequest, ISectionResultFilterRequest } from './result.interface.js';
+import type {
+    ICombinedRankingFilterRequest,
+    ICombinedRankingResponse,
+    ICombinedRankingRow,
+    ICreateResultPayload,
+    IResultByRollFilterRequest,
+    IResultFilterRequest,
+    ISectionResultFilterRequest,
+} from './result.interface.js';
 import { prisma } from '../../shared/prisma.js';
 import ApiError from '../../errors/api.error.js';
-import { calculateSubjectRawTotal, getTopScorersBySubject, resolveGrade } from './result.utils.js';
+import {
+    calculateSubjectRawTotal,
+    getTopScorersBySubject,
+    resolveGrade,
+} from './result.utils.js';
 import { buildPaginationMeta, type PaginationResult } from '../../helper/paginationHelper.js';
 import { resultSearchableFields } from './result.constant.js';
 
+/**
+ * Shared ranking comparator used everywhere rank/position is assigned.
+ * Primary  : totalMarks   (penalises partial subject sets)
+ * Secondary: gradePoint   (GPA average)
+ * Tertiary : percentage
+ * Null / missing results sink to the bottom.
+ */
+const compareForRank = (
+    a: { totalMarks: number | null; gradePoint: number | null; percentage: number | null },
+    b: { totalMarks: number | null; gradePoint: number | null; percentage: number | null }
+): number => {
+    // Both missing → equal
+    if (a.totalMarks === null && b.totalMarks === null) return 0;
+    // One missing → the one with data ranks higher
+    if (a.totalMarks === null) return 1;
+    if (b.totalMarks === null) return -1;
 
+    // 1. totalMarks DESC
+    if (b.totalMarks !== a.totalMarks) {
+        return b.totalMarks - a.totalMarks;
+    }
+
+    // 2. gradePoint DESC
+    const aGP = a.gradePoint ?? 0;
+    const bGP = b.gradePoint ?? 0;
+    if (bGP !== aGP) {
+        return bGP - aGP;
+    }
+
+    // 3. percentage DESC
+    const aPct = a.percentage ?? 0;
+    const bPct = b.percentage ?? 0;
+    return bPct - aPct;
+};
 
 const buildResultComputation = async (
     examId: number,
@@ -18,14 +63,14 @@ const buildResultComputation = async (
         throw new ApiError(httpStatus.NOT_FOUND, 'Exam not found');
     }
 
-    const subjectIds = details.map(d => d.subjectId);
+    const subjectIds = details.map((d) => d.subjectId);
     const subjects = await prisma.subject.findMany({
         where: { id: { in: subjectIds } },
     });
 
-    const subjectMap = new Map(subjects.map(s => [s.id, s]));
+    const subjectMap = new Map(subjects.map((s) => [s.id, s]));
 
-    const missing = subjectIds.filter(id => !subjectMap.has(id));
+    const missing = subjectIds.filter((id) => !subjectMap.has(id));
     if (missing.length > 0) {
         throw new ApiError(
             httpStatus.BAD_REQUEST,
@@ -48,7 +93,7 @@ const buildResultComputation = async (
     let overallFullMarks = 0;
     let overallObtained = 0;
 
-    const computedDetails = details.map(detail => {
+    const computedDetails = details.map((detail) => {
         const subject = subjectMap.get(detail.subjectId)!;
         const rawTotal = calculateSubjectRawTotal(detail);
 
@@ -77,13 +122,13 @@ const buildResultComputation = async (
         };
     });
 
-    // ── Overall percentage (still useful for ranking & display) ─────
+    // Percentage is still useful for display, but ranking never relies on it alone.
+    // A student with only 1 subject @ 90 will have percentage 90 but totalMarks 90,
+    // so they will rank below students who sat more subjects.
     const overallPercentage =
-        overallFullMarks > 0
-            ? (overallObtained / overallFullMarks) * 100
-            : 0;
+        overallFullMarks > 0 ? (overallObtained / overallFullMarks) * 100 : 0;
 
-    // ── Overall GPA = average of subject gradePoints ────────────────
+    // Overall GPA = average of subject gradePoints
     const totalGradePoints = computedDetails.reduce(
         (sum, d) => sum + (d.gradePoint || 0),
         0
@@ -91,11 +136,8 @@ const buildResultComputation = async (
     const subjectCount = computedDetails.length || 1;
     const overallGradePoint = Number((totalGradePoints / subjectCount).toFixed(2));
 
-    // ── Derive overall letter grade from the average GPA ─────────────
-    // Find the closest matching grade from the grading scale
-    const sortedByGP = [...gradingScales].sort(
-        (a, b) => b.gradePoint - a.gradePoint
-    );
+    // Derive overall letter grade from the average GPA
+    const sortedByGP = [...gradingScales].sort((a, b) => b.gradePoint - a.gradePoint);
 
     let overallGrade = 'F';
     for (const scale of sortedByGP) {
@@ -138,7 +180,7 @@ const createResult = async (payload: ICreateResultPayload): Promise<Result> => {
         overallGradePoint,
     } = await buildResultComputation(examId, details);
 
-    const result = await prisma.$transaction(async tx => {
+    const result = await prisma.$transaction(async (tx) => {
         return tx.result.create({
             data: {
                 studentEnrollmentId,
@@ -150,15 +192,16 @@ const createResult = async (payload: ICreateResultPayload): Promise<Result> => {
                 gradePoint: overallGradePoint,
                 details: { create: computedDetails },
             },
-            include: { details: { include: { subject: true } }, enrollment: true, exam: true },
+            include: {
+                details: { include: { subject: true } },
+                enrollment: true,
+                exam: true,
+            },
         });
     });
 
     return result;
 };
-
-
-
 
 const getAllResults = async (
     filters: IResultFilterRequest,
@@ -179,7 +222,7 @@ const getAllResults = async (
 
     if (searchTerm) {
         andConditions.push({
-            OR: resultSearchableFields.map(field => ({
+            OR: resultSearchableFields.map((field) => ({
                 [field]: { contains: searchTerm, mode: 'insensitive' },
             })),
         });
@@ -193,7 +236,6 @@ const getAllResults = async (
         andConditions.push({ studentEnrollmentId: Number(studentEnrollmentId) });
     }
 
-    // ── Filter by the enrollment's class/section (Result → StudentEnrollment) ──
     if (classId !== undefined || sectionId !== undefined) {
         andConditions.push({
             enrollment: {
@@ -211,7 +253,6 @@ const getAllResults = async (
         });
     }
 
-    // Any remaining plain string filters (if IResultFilterRequest has others)
     if (Object.keys(restFilters).length > 0) {
         andConditions.push({
             AND: Object.entries(restFilters).map(([key, value]) => ({
@@ -241,7 +282,6 @@ const getAllResults = async (
     return { meta, data: result };
 };
 
-
 const getSectionWiseResults = async (filters: ISectionResultFilterRequest) => {
     const { examId, classId, sectionId } = filters;
 
@@ -250,8 +290,7 @@ const getSectionWiseResults = async (filters: ISectionResultFilterRequest) => {
         throw new ApiError(httpStatus.NOT_FOUND, 'Exam not found');
     }
 
-    // Pull every current enrollment in this class+section, whether or not they
-    // have a result yet, so the ranking sheet always shows the full roster.
+    // Full roster of the class+section (even students with no result yet)
     const enrollments = await prisma.studentEnrollment.findMany({
         where: {
             classId,
@@ -269,7 +308,7 @@ const getSectionWiseResults = async (filters: ISectionResultFilterRequest) => {
         orderBy: { rollNumber: 'asc' },
     });
 
-    const rows = enrollments.map(enrollment => {
+    const rows = enrollments.map((enrollment) => {
         const result = enrollment.results[0] ?? null;
 
         return {
@@ -289,17 +328,12 @@ const getSectionWiseResults = async (filters: ISectionResultFilterRequest) => {
         };
     });
 
-    // Rank by percentage desc; students without a result sink to the bottom.
-    rows.sort((a, b) => {
-        if (a.percentage === null && b.percentage === null) return 0;
-        if (a.percentage === null) return 1;
-        if (b.percentage === null) return -1;
-        return b.percentage - a.percentage;
-    });
+    // Rank by totalMarks → gradePoint → percentage (class+section scoped)
+    rows.sort(compareForRank);
 
     const ranked = rows.map((row, index) => ({
         ...row,
-        rank: row.percentage !== null ? index + 1 : null,
+        rank: row.totalMarks !== null ? index + 1 : null,
     }));
 
     return {
@@ -311,7 +345,6 @@ const getSectionWiseResults = async (filters: ISectionResultFilterRequest) => {
         data: ranked,
     };
 };
-
 
 const getSingleResult = async (id: number): Promise<Result> => {
     const result = await prisma.result.findUnique({
@@ -343,7 +376,7 @@ const updateResult = async (
         );
     }
 
-    const result = await prisma.$transaction(async tx => {
+    const result = await prisma.$transaction(async (tx) => {
         if (payload.details && payload.details.length > 0) {
             const {
                 computedDetails,
@@ -375,7 +408,11 @@ const updateResult = async (
 
         return tx.result.findUniqueOrThrow({
             where: { id },
-            include: { details: { include: { subject: true } }, enrollment: true, exam: true },
+            include: {
+                details: { include: { subject: true } },
+                enrollment: true,
+                exam: true,
+            },
         });
     });
 
@@ -396,6 +433,10 @@ const publishResult = async (id: number, isPublished: boolean): Promise<Result> 
     return result;
 };
 
+/**
+ * Persist position for every result in the given class+section for one exam.
+ * Ranking order: totalMarks → gradePoint → percentage
+ */
 const calculatePositions = async (
     examId: number,
     classId: number,
@@ -409,12 +450,24 @@ const calculatePositions = async (
                 sectionId,
             },
         },
-        orderBy: { percentage: 'desc' },
+        // Fetch everything needed for the comparator; final order is applied in JS
+        select: {
+            id: true,
+            totalMarks: true,
+            gradePoint: true,
+            percentage: true,
+        },
     });
 
     if (results.length === 0) {
-        throw new ApiError(httpStatus.NOT_FOUND, 'No results found for this exam in the selected class and section');
+        throw new ApiError(
+            httpStatus.NOT_FOUND,
+            'No results found for this exam in the selected class and section'
+        );
     }
+
+    // Stable multi-key sort
+    results.sort(compareForRank);
 
     await prisma.$transaction(
         results.map((result, index) =>
@@ -427,74 +480,86 @@ const calculatePositions = async (
 
     return { updated: results.length };
 };
-// result.service.ts
+
 const getResultsByRoll = async (filters: IResultByRollFilterRequest) => {
-  const { classId, sectionId, rollNumber, examId } = filters;
+    const { classId, sectionId, rollNumber, examId } = filters;
 
-  const enrollment = await prisma.studentEnrollment.findFirst({
-    where: { classId, sectionId, rollNumber, isCurrent: true },
-    include: { student: true, class: true, section: true },
-  });
+    const enrollment = await prisma.studentEnrollment.findFirst({
+        where: { classId, sectionId, rollNumber, isCurrent: true },
+        include: { student: true, class: true, section: true },
+    });
 
-  if (!enrollment) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'No student found for this class, section, and roll number');
-  }
+    if (!enrollment) {
+        throw new ApiError(
+            httpStatus.NOT_FOUND,
+            'No student found for this class, section, and roll number'
+        );
+    }
 
-  const results = await prisma.result.findMany({
-    where: {
-      studentEnrollmentId: enrollment.id,
-      isPublished: true,
-      ...(examId !== undefined ? { examId } : {}),
-    },
-    include: {
-      details: { include: { subject: true } },
-      exam: true,
-    },
-    orderBy: { exam: { startDate: 'desc' } },
-  });
+    const results = await prisma.result.findMany({
+        where: {
+            studentEnrollmentId: enrollment.id,
+            isPublished: true,
+            ...(examId !== undefined ? { examId } : {}),
+        },
+        include: {
+            details: { include: { subject: true } },
+            exam: true,
+        },
+        orderBy: { exam: { startDate: 'desc' } },
+    });
 
-  if (results.length === 0) {
-    throw new ApiError(httpStatus.NOT_FOUND, 'No published results found for this student');
-  }
+    if (results.length === 0) {
+        throw new ApiError(
+            httpStatus.NOT_FOUND,
+            'No published results found for this student'
+        );
+    }
 
-  // One top-scorers lookup PER EXAM (not per subject) — results.length is small (usually 1)
-  const resultsWithTopScorers = await Promise.all(
-    results.map(async (result) => {
-      const topScorersMap = await getTopScorersBySubject(
-        result.examId,
-        enrollment.classId,
-        enrollment.sectionId,
-        enrollment.id
-      );
+    const resultsWithTopScorers = await Promise.all(
+        results.map(async (result) => {
+            const topScorersMap = await getTopScorersBySubject(
+                result.examId,
+                enrollment.classId,
+                enrollment.sectionId,
+                enrollment.id
+            );
 
-      const details = result.details.map((detail) => ({
-        ...detail,
-        topScorer: topScorersMap.get(detail.subjectId) ?? null,
-      }));
+            const details = result.details.map((detail) => ({
+                ...detail,
+                topScorer: topScorersMap.get(detail.subjectId) ?? null,
+            }));
 
-      return { ...result, details };
-    })
-  );
+            return { ...result, details };
+        })
+    );
 
-  return {
-    student: {
-      fullName: enrollment.student.fullName,
-      admissionNumber: enrollment.student.admissionNumber,
-      fatherName: enrollment.student.fatherName,
-      motherName: enrollment.student.motherName,
-      gender: enrollment.student.gender,
-      dateOfBirth: enrollment.student.dateOfBirth,
-      phone: enrollment.student.phone,
-      address: enrollment.student.address,
-      photo: enrollment.student.photo,
-      rollNumber: enrollment.rollNumber,
-      className: enrollment.class.name,
-      sectionName: enrollment.section.name,
-    },
-    results: resultsWithTopScorers,
-  };
+    return {
+        student: {
+            fullName: enrollment.student.fullName,
+            admissionNumber: enrollment.student.admissionNumber,
+            fatherName: enrollment.student.fatherName,
+            motherName: enrollment.student.motherName,
+            gender: enrollment.student.gender,
+            dateOfBirth: enrollment.student.dateOfBirth,
+            phone: enrollment.student.phone,
+            address: enrollment.student.address,
+            photo: enrollment.student.photo,
+            rollNumber: enrollment.rollNumber,
+            className: enrollment.class.name,
+            sectionName: enrollment.section.name,
+        },
+        results: resultsWithTopScorers,
+    };
 };
 
+/**
+ * Combined ranking across multiple exams for one class+section.
+ * Primary rank key = average of totalMarks (not average percentage).
+ * Secondary = average gradePoint.
+ * This prevents a student who only sat 1 subject @ 90 from ranking above
+ * students who sat the full set of subjects.
+ */
 const getCombinedRanking = async (
     filters: ICombinedRankingFilterRequest
 ): Promise<ICombinedRankingResponse> => {
@@ -506,7 +571,10 @@ const getCombinedRanking = async (
     });
 
     if (enrollments.length === 0) {
-        throw new ApiError(httpStatus.NOT_FOUND, 'No students found in this class and section');
+        throw new ApiError(
+            httpStatus.NOT_FOUND,
+            'No students found in this class and section'
+        );
     }
 
     const enrollmentIds = enrollments.map((e) => e.id);
@@ -520,43 +588,85 @@ const getCombinedRanking = async (
         select: {
             studentEnrollmentId: true,
             examId: true,
+            totalMarks: true,
+            gradePoint: true,
             percentage: true,
         },
     });
 
     const examIdSet = new Set(results.map((r) => r.examId));
 
-    const byStudent = new Map<number, { totalPercentage: number; examCount: number }>();
+    type Agg = {
+        totalMarksSum: number;
+        gradePointSum: number;
+        percentageSum: number;
+        examCount: number;
+    };
+
+    const byStudent = new Map<number, Agg>();
 
     for (const result of results) {
-        if (result.percentage === null) continue;
+        if (result.totalMarks === null) continue;
         const key = result.studentEnrollmentId;
-        const existing = byStudent.get(key) ?? { totalPercentage: 0, examCount: 0 };
-        existing.totalPercentage += result.percentage;
+        const existing = byStudent.get(key) ?? {
+            totalMarksSum: 0,
+            gradePointSum: 0,
+            percentageSum: 0,
+            examCount: 0,
+        };
+        existing.totalMarksSum += result.totalMarks;
+        existing.gradePointSum += result.gradePoint ?? 0;
+        existing.percentageSum += result.percentage ?? 0;
         existing.examCount += 1;
         byStudent.set(key, existing);
     }
 
     const rows: ICombinedRankingRow[] = enrollments.map((enrollment) => {
         const agg = byStudent.get(enrollment.id);
-        const averagePercentage = agg && agg.examCount > 0
-            ? Number((agg.totalPercentage / agg.examCount).toFixed(2))
-            : null;
+        const examCount = agg?.examCount ?? 0;
+
+        const averageTotalMarks =
+            examCount > 0
+                ? Number((agg!.totalMarksSum / examCount).toFixed(2))
+                : null;
+        const averageGradePoint =
+            examCount > 0
+                ? Number((agg!.gradePointSum / examCount).toFixed(2))
+                : null;
+        const averagePercentage =
+            examCount > 0
+                ? Number((agg!.percentageSum / examCount).toFixed(2))
+                : null;
 
         return {
             studentEnrollmentId: enrollment.id,
             rollNumber: enrollment.rollNumber ?? null,
-            name: enrollment.student.fullName, // fixed: was `name`
-            examCount: agg?.examCount ?? 0,
-            averagePercentage,
+            name: enrollment.student.fullName,
+            examCount,
+            averagePercentage,          // kept for display
+            averageTotalMarks,          // primary rank key
+            averageGradePoint,          // secondary rank key
             rank: null,
         };
     });
 
+    // Split & sort
     const withResults = rows
-        .filter((r) => r.averagePercentage !== null)
-        .sort((a, b) => b.averagePercentage! - a.averagePercentage!);
-    const withoutResults = rows.filter((r) => r.averagePercentage === null);
+        .filter((r) => r.averageTotalMarks !== null)
+        .sort((a, b) => {
+            // averageTotalMarks DESC
+            if (b.averageTotalMarks! !== a.averageTotalMarks!) {
+                return b.averageTotalMarks! - a.averageTotalMarks!;
+            }
+            // averageGradePoint DESC
+            const aGP = a.averageGradePoint ?? 0;
+            const bGP = b.averageGradePoint ?? 0;
+            if (bGP !== aGP) return bGP - aGP;
+            // averagePercentage DESC (tie-breaker)
+            return (b.averagePercentage ?? 0) - (a.averagePercentage ?? 0);
+        });
+
+    const withoutResults = rows.filter((r) => r.averageTotalMarks === null);
 
     withResults.forEach((row, index) => {
         row.rank = index + 1;
@@ -569,7 +679,6 @@ const getCombinedRanking = async (
     };
 };
 
-
 const deleteResult = async (id: number): Promise<Result> => {
     const existing = await getSingleResult(id);
 
@@ -581,7 +690,6 @@ const deleteResult = async (id: number): Promise<Result> => {
     }
 
     const result = await prisma.result.delete({ where: { id } });
-
     return result;
 };
 
