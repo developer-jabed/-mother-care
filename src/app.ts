@@ -18,7 +18,7 @@ import './app/modules/resultCart/resultCart.worker.js';
 
 // side-effect import — starts the BullMQ worker listening on 'smsQueue'
 import "./app/modules/Sms/sms.worker.js";
-import { startKeepAliveCron } from "./app/shared/keepAlive.js";
+
 import { AdmitCardService } from './app/modules/admitCard/admitCard.service.js';
 import { ResultCardService } from "./app/modules/resultCart/resultCart.service.js";
 
@@ -104,7 +104,7 @@ const buildApp = async () => {
   // ── Lifecycle hooks ────────────────────────────────────────
   app.addHook("onReady", () => {
     app.log.info("✅ Server is ready and accepting connections");
-    startKeepAliveCron(app);
+   
   });
 
   app.addHook("onClose", (_instance, done) => {
